@@ -1,218 +1,313 @@
-High-Level System
+# YouTube Optimizer - Backend API
+
+A powerful NestJS backend service that provides AI-powered YouTube video optimization suggestions. This API works in conjunction with an Angular frontend to help content creators improve their video titles, descriptions, tags, and thumbnails using advanced AI analysis.
 
-Client (Angular) → API (NestJS) → AI Providers + YouTube API + Supabase (DB/Auth/Storage) + Stripe (billing)
+## 🚀 Features
+
+- **AI-Powered Suggestions**: Generate optimized titles, descriptions, and tags using OpenAI/Groq
+- **YouTube Integration**: Fetch video metadata using YouTube Data API
+- **User Authentication**: Secure authentication via Supabase
+- **Usage Tracking**: Monitor user audit counts and enforce limits
+- **Audit History**: Store and retrieve user's optimization history
+- **Rate Limiting**: Built-in protection against API abuse
 
-[Angular SPA]
-   │ HTTPS (JWT from Supabase)
-   ▼
-[NestJS API Gateway]
-   ├─ Auth (Supabase JWT verify)
-   ├─ YouTube Ingestion Service
-   ├─ AI Orchestrator (titles/descriptions/shorts/thumbnail-prompts)
-   ├─ Channel Auditor (Top-10 Fixes scorer)
-   ├─ Billing Webhooks (Stripe)
-   └─ Usage & Rate Limits
-   │
-   ▼
-[Supabase: Postgres + RLS]
-   ├─ users / profiles
-   ├─ channels / videos
-   ├─ audits / suggestions
-   ├─ brand_profiles
-   ├─ usage_events
-   └─ subscriptions (Stripe ids)
+## 🏗️ Architecture
 
-Core User Flows (MVP)
+```
+Angular Frontend ←→ NestJS API ←→ External Services
+                                  ├── YouTube Data API
+                                  ├── OpenAI/Groq AI
+                                  └── Supabase (Database & Auth)
+```
+
+## 📋 Prerequisites
 
-Auth: Sign in → Supabase Auth (email/password or Google). Angular stores Supabase session; passes JWT to Nest for every call.
-
-Analyze single video: Paste URL → Nest fetches metadata via YouTube Data API → AI Orchestrator generates 3 titles, 1 description rewrite, tags, thumbnail prompts, Shorts pack if applicable → store in audits/suggestions → return to client.
-
-Top-10 Fixes: Paste Channel URL → Nest pulls latest N videos (public stats) → ranks by “improvement potential” → batch-generate suggestions on click.
-
-Billing: Free plan (5 audits). Stripe checkout for €9/mo Creator; webhooks update subscriptions. RLS enforces plan limits.
-
-Frontend (Angular)
-
-Libraries: Angular + Angular Material + Supabase JS + Stripe Checkout
-
-Routes:
-
-/ Landing (pricing, CTA)
-
-/app Dashboard (list of videos, audits)
-
-/analyze?url=<youtube> Analyze screen (results with copy buttons & export)
-
-/channel?url=<channel> Channel audit (Top-10 Fixes)
-
-/settings/brand Brand profile (tone, banned words, language)
-
-/billing Subscription management
-
-State: NgRx or simple signals; start simple with services.
-
-UX Key: one text field + single “Analyze” button → results in <10s.
-
-Backend (NestJS)
-
-Modules
-
-AuthModule — verifies Supabase JWT via JWKS; attaches user id.
-
-YoutubeModule — Data API client; fetch video/channel meta.
-
-AIModule — provider-agnostic orchestrator; prompt templates + safety.
-
-AuditModule — persists audits/suggestions; scoring engine.
-
-BillingModule — Stripe checkout sessions & webhooks.
-
-UsageModule — limits (free vs paid), per-user quotas.
-
-BrandModule — loads tone/language rules.
-
-Key Services
-
-VideoIngestionService:
-
-fetchVideo(url|id): title, description, tags, duration, views, CTR proxy (if available), publish date, thumbnail URL.
-
-AiSuggestionService:
-
-generateTitles(context, brandProfile): string[3]
-
-rewriteDescription(context, brandProfile): string
-
-suggestTags(context, locale): string[]
-
-thumbnailPrompts(context): string[3] (prompt = composition, subject, text/no text, style)
-
-shortsPack(context): {hook, title, description, hashtags}
-
-RankingService (Top-10 Fixes):
-
-Score = f(views_last_28d, age, current_title_quality heuristics, competition) → sort desc.
-
-BillingService:
-
-createCheckoutSession(userId, priceId)
-
-Webhooks: invoice.paid, customer.subscription.updated, checkout.session.completed
-
-UsageService:
-
-Track AUDIT_CREATED; enforce 5 free/mo; unlimited for paid.
-
-Endpoint Sketch
-
-POST /api/analyze/video { url } → returns suggestions set
-
-POST /api/analyze/channel { channelUrl, limit } → returns ranked list
-
-POST /api/checkout/session → Stripe URL
-
-GET /api/me/usage → remaining quota
-
-GET /api/me/subscription → status
-
-POST /api/brand (upsert) → tone rules
-
-POST /api/webhooks/stripe (raw body)
-
-Data Model (Supabase / Postgres)
-
-profiles(id uuid pk, email, created_at)
-
-brand_profiles(id uuid pk, user_id fk, tone text, banned_words text[], persona jsonb, language text)
-
-channels(id pk, user_id fk, platform text, external_id, title)
-
-videos(id pk, channel_id fk, external_id, title, duration_s, views, published_at, is_shorts bool)
-
-audits(id pk, user_id fk, video_id fk, score numeric, created_at)
-
-suggestions(id pk, audit_id fk, type text, content jsonb)
-
-types: title_set, description, tags, thumbnail_prompts, shorts_pack
-
-subscriptions(user_id pk, stripe_customer_id, stripe_subscription_id, plan text, status text, current_period_end timestamptz)
-
-usage_events(id pk, user_id fk, type text, meta jsonb, created_at)
-
-RLS highlights
-
-profiles, brand_profiles, audits, suggestions, usage_events row-level policies on user_id = auth.uid()
-
-videos/channels scoped to owner.
-
-Prompt Templates (MVP)
-
-Titles (3x)
-“You are a YouTube title specialist. Output 3 different titles (max 60 chars) that maximize curiosity without clickbait. Keep the creator’s tone: {brand.tone}. Avoid words: {brand.banned_words}. Video topic/keywords: {context.keywords}. Audience: {locale}. Return JSON array of strings.”
-
-Description rewrite
-“Rewrite the description to improve SEO and watch-time. Keep links. Add 3 keyword-rich lines at top, 5 bullet highlights, and a CTA. Language: {locale}. Output markdown.”
-
-Tags
-“Return 15 YouTube tags (no hashtags). Prioritize long-tail. Language: {locale}. JSON array.”
-
-Thumbnail prompts (3x)
-“Return 3 concise image prompts for an eye-catching YouTube thumbnail: subject, expression, setting, composition (rule of thirds), 3–5 words of on-image text (optional), avoid clutter. No logos. JSON list.”
-
-Shorts pack
-“If video is <60s, create a Shorts optimization pack: 1 hook (≤80 chars), 1 title (≤60), 1 description (≤120), 10 hashtags. Language: {locale}. JSON.”
-
-Scoring: “Top-10 Fixes”
-
-Heuristic to start (deterministic, cheap):
-
-score =  w1 * log(views_last_28d + 1)
-       + w2 * freshness_boost(published_at)
-       + w3 * title_gap_estimate(current_title)
-       + w4 * shorts_bonus(is_shorts)
-
-
-title_gap_estimate: penalize ≥70 chars, passive voice, no number/benefit verb.
-
-Tune weights by early data; persist score in audits.score.
-
-Quotas & Plans
-
-Free: 5 audits/month (tracked in usage_events)
-
-Creator (€9/mo): unlimited audits; enable channel batch up to 50 videos
-
-One-time (€29): generate “Quick Fix Pack” for selected 10 videos (CSV/ZIP export)
-
-Deployment (fast + cheap)
-
-Frontend: Vercel (Angular SSR optional later)
-
-API: Fly.io / Railway / Render (Node 20), env secrets
-
-DB/Auth/Storage: Supabase (Starter)
-
-Stripe: Checkout + Customer Portal
-
-AI: OpenAI GPT-4o (fallback: Anthropic for titles), no queue first week
-
-Observability & Security
-
-Logs & Tracing: pino logs + Logtail/Datadog (free tier ok)
-
-Rate limiting: Nest middleware (per IP + per user), simple Redis optional (can start in-memory)
-
-Secrets: .env only on server; never store YouTube OAuth tokens in MVP (use public Data API where possible)
-
-Webhooks: Stripe endpoint with raw body; verify signature
-
-Environment Variables (server)
-SUPABASE_URL=
-SUPABASE_JWT_SECRET=
-SUPABASE_SERVICE_ROLE_KEY=
-STRIPE_SECRET_KEY=
-STRIPE_WEBHOOK_SECRET=
-OPENAI_API_KEY=
-YOUTUBE_API_KEY=
-APP_BASE_URL=https://app.yourdomain.com
+- Node.js (v18 or higher)
+- npm or yarn
+- Supabase account and project
+- YouTube Data API key
+- OpenAI API key or Groq API key
+
+## 🔧 Installation
+
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd youtube-optimizer-BE
+   ```
+
+2. **Install dependencies**
+   ```bash
+   npm install
+   ```
+
+3. **Environment Setup**
+   Create a `.env` file in the root directory:
+   ```env
+   # Supabase Configuration
+   SUPABASE_URL=your_supabase_project_url
+   SUPABASE_KEY=your_supabase_anon_key
+
+   # YouTube Data API
+   YOUTUBE_API_KEY=your_youtube_api_key
+
+   # AI Service (choose one)
+   OPENAI_API_KEY=your_openai_api_key
+   # OR
+   GROQ_API_KEY=your_groq_api_key
+
+   # Server Configuration
+   PORT=3000
+   ```
+
+4. **Database Setup**
+   Run the SQL script in your Supabase SQL Editor:
+   ```bash
+   # Copy the contents of database-setup.sql and run in Supabase
+   ```
+
+## 🗄️ Database Schema
+
+The application uses the following main tables in Supabase:
+
+- **audits**: Stores video analysis results
+- **usage_events**: Tracks user API usage
+- **profiles**: User profile information (handled by Supabase Auth)
+
+## 🚀 Running the Application
+
+### Development Mode
+```bash
+npm run start:dev
+```
+
+### Production Mode
+```bash
+npm run build
+npm run start:prod
+```
+
+### Testing
+```bash
+# Unit tests
+npm run test
+
+# E2E tests
+npm run test:e2e
+
+# Test coverage
+npm run test:cov
+```
+
+## 📚 API Documentation
+
+### Authentication
+All protected endpoints require a Bearer token from Supabase authentication.
+
+```http
+Authorization: Bearer <supabase_jwt_token>
+```
+
+### Endpoints
+
+#### **POST** `/analyze/video`
+Analyze a YouTube video and generate AI suggestions.
+
+**Request:**
+```json
+{
+  "url": "https://www.youtube.com/watch?v=VIDEO_ID"
+}
+```
+
+**Response:**
+```json
+{
+  "id": "uuid",
+  "user_id": "user_uuid",
+  "video_url": "youtube_url",
+  "video_title": "Original Video Title",
+  "ai_titles": ["Suggested Title 1", "Suggested Title 2", "Suggested Title 3"],
+  "ai_description": "AI-generated optimized description",
+  "ai_tags": ["tag1", "tag2", "tag3"],
+  "created_at": "2024-01-01T00:00:00Z"
+}
+```
+
+#### **GET** `/analyze/history`
+Retrieve user's audit history.
+
+**Response:**
+```json
+[
+  {
+    "id": "uuid",
+    "video_title": "Video Title",
+    "ai_titles": ["Title 1", "Title 2", "Title 3"],
+    "created_at": "2024-01-01T00:00:00Z"
+  }
+]
+```
+
+#### **GET** `/youtube/video`
+Fetch YouTube video metadata.
+
+**Query Parameters:**
+- `url`: YouTube video URL
+
+**Response:**
+```json
+{
+  "id": "video_id",
+  "title": "Video Title",
+  "description": "Video Description",
+  "tags": ["tag1", "tag2"],
+  "thumbnail": "thumbnail_url",
+  "publishedAt": "2024-01-01T00:00:00Z",
+  "duration": "PT4M13S",
+  "views": 12345,
+  "likes": 567,
+  "comments": 89
+}
+```
+
+## 🔧 Configuration
+
+### AI Service Configuration
+The application is configured to use Groq (via OpenRouter) by default. You can modify the AI service in [`src/ai/ai.service.ts`](src/ai/ai.service.ts):
+
+```typescript
+this.openai = new OpenAI({
+    apiKey: process.env.GROQ_API_KEY,
+    baseURL: 'https://openrouter.ai/api/v1',
+});
+```
+
+### CORS Configuration
+The API is configured to accept requests from `http://localhost:4200` (Angular dev server). Update this in [`src/main.ts`](src/main.ts) for production:
+
+```typescript
+app.enableCors({
+  origin: 'http://localhost:4200', // Update for production
+  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+  credentials: true,
+});
+```
+
+## 📁 Project Structure
+
+```
+src/
+├── ai/                 # AI service for generating suggestions
+├── audit/             # Audit management and history
+├── common/            # Shared utilities and guards
+├── database/          # Database setup service
+├── supabase/          # Supabase client configuration
+├── youtube/           # YouTube API integration
+├── app.module.ts      # Main application module
+└── main.ts           # Application bootstrap
+```
+
+## 🧪 Testing
+
+The project includes comprehensive testing setup:
+
+- **Unit Tests**: Test individual services and controllers
+- **E2E Tests**: Test complete API workflows
+- **Coverage Reports**: Track test coverage
+
+Example test commands:
+```bash
+# Run all unit tests
+npm test
+
+# Run tests in watch mode
+npm run test:watch
+
+# Generate coverage report
+npm run test:cov
+```
+
+## 🔒 Security Features
+
+- **JWT Authentication**: Via Supabase Auth Guard
+- **Rate Limiting**: Built-in usage tracking
+- **Input Validation**: URL validation for YouTube videos
+- **Error Handling**: Comprehensive error responses
+
+## 🚀 Deployment
+
+### Environment Variables for Production
+```env
+NODE_ENV=production
+SUPABASE_URL=your_production_supabase_url
+SUPABASE_KEY=your_production_supabase_key
+YOUTUBE_API_KEY=your_youtube_api_key
+GROQ_API_KEY=your_groq_api_key
+PORT=3000
+```
+
+### Build for Production
+```bash
+npm run build
+npm run start:prod
+```
+
+## 🤝 Frontend Integration
+
+This backend is designed to work with an Angular frontend. The frontend should:
+
+1. Handle Supabase authentication
+2. Pass JWT tokens in request headers
+3. Make HTTP requests to the API endpoints
+4. Display AI suggestions to users
+
+Expected frontend structure:
+```
+Angular Frontend/
+├── Authentication Service (Supabase)
+├── HTTP Interceptor (JWT tokens)
+├── Video Analysis Component
+├── History Component
+└── API Service (HTTP client)
+```
+
+## 📝 Usage Limits
+
+- **Free Tier**: 100 audits per user
+- **Upgrade Path**: Configurable limits for paid plans
+
+## 🐛 Troubleshooting
+
+### Common Issues
+
+1. **Database Connection Issues**
+   - Verify Supabase credentials
+   - Run database setup SQL
+   - Check table permissions
+
+2. **YouTube API Errors**
+   - Verify API key validity
+   - Check quota limits
+   - Ensure video is public
+
+3. **AI Service Errors**
+   - Verify API key
+   - Check rate limits
+   - Monitor response format
+
+## 📄 License
+
+This project is licensed under the UNLICENSED license.
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests
+5. Submit a pull request
+
+## 📞 Support
+
+For support and questions, please refer to the project documentation or create an issue in the repository.
