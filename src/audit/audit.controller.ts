@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { YoutubeService } from '../youtube/youtube.service';
 import { AiService } from '../ai/ai.service';
 import { SupabaseService } from '../supabase/supabase.service';
@@ -36,10 +36,10 @@ export class AuditController {
       const video = await this.youtubeService.getVideoData(body.url);
       const suggestions = await this.aiService.generateVideoSuggestions(video);
       const response: AuditResponse = { video, suggestions };
-      
+
       // Save the audit and get the saved item
       const savedAudit = await this.auditRepo.saveAudit(userId, body.url, response);
-      
+
       // Log usage event
       const client = this.supabase.getClient();
       await client.from('usage_events').insert({
@@ -67,5 +67,20 @@ export class AuditController {
 
     if (error) throw new Error(error.message);
     return data;
+  }
+
+  @Delete('delete/:id')
+  @UseGuards(SupabaseAuthGuard)
+  async deleteAudit(@Param('id') auditId: string, @Req() req) {
+    try {
+      const userId = req.user.id;
+
+      // Delete audit using repository
+      await this.auditRepo.deleteAudit(auditId, userId);
+
+      return { message: 'Audit deleted successfully', id: auditId };
+    } catch (error) {
+      throw error;
+    }
   }
 }

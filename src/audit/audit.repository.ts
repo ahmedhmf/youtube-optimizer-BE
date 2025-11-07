@@ -6,7 +6,7 @@ import { AuditResponse } from './audit.types';
 export class AuditRepository {
   private readonly logger = new Logger(AuditRepository.name);
 
-  constructor(private readonly supabase: SupabaseService) {}
+  constructor(private readonly supabase: SupabaseService) { }
 
   async saveAudit(userId: string, url: string, data: AuditResponse) {
     const client = this.supabase.getClient();
@@ -19,6 +19,7 @@ export class AuditRepository {
       ai_titles: suggestions.titles,
       ai_description: suggestions.description,
       ai_tags: suggestions.tags,
+      thumbnail_url: video.thumbnail,
     }).select().single();
 
     if (error) throw new Error(error.message);
@@ -32,7 +33,7 @@ export class AuditRepository {
       console.log('Supabase client obtained:', client);
       const { count, error } = await client
         .from('audits')
-        .select('*', { count: 'exact'})
+        .select('*', { count: 'exact' })
         .eq('user_id', userId);
 
       if (error) {
@@ -48,12 +49,41 @@ export class AuditRepository {
         });
         throw new Error(`Supabase error: ${error.message || 'Unknown error'} (Code: ${error.code || 'N/A'})`);
       }
-      
+
       this.logger.log(`Found ${count ?? 0} audits for user ${userId}`);
       return count ?? 0;
     } catch (error) {
       this.logger.error('Error counting user audits:', error);
       throw error;
     }
+  }
+
+  async deleteAudit(auditId: string, userId: string): Promise<{ id: string; thumbnail_url?: string }> {
+    const client = this.supabase.getClient();
+
+    // First get the audit to check ownership and get thumbnail URL
+    const { data: audit, error: fetchError } = await client
+      .from('audits')
+      .select('id, thumbnail_url')
+      .eq('id', auditId)
+      .eq('user_id', userId)
+      .single();
+
+    if (fetchError || !audit) {
+      throw new Error('Audit not found or unauthorized');
+    }
+
+    // Delete the audit
+    const { error: deleteError } = await client
+      .from('audits')
+      .delete()
+      .eq('id', auditId)
+      .eq('user_id', userId);
+
+    if (deleteError) {
+      throw new Error(`Failed to delete audit: ${deleteError.message}`);
+    }
+
+    return audit;
   }
 }
