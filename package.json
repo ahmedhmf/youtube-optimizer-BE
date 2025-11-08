@@ -24,13 +24,16 @@
     "@nestjs/axios": "^4.0.1",
     "@nestjs/common": "^11.0.1",
     "@nestjs/core": "^11.0.1",
-    "@nestjs/platform-express": "^11.0.1",
-    "@supabase/supabase-js": "^2.78.0",
+    "@nestjs/platform-express": "^11.1.8",
+    "@supabase/supabase-js": "^2.80.0",
     "dotenv": "^17.2.3",
-    "openai": "^6.7.0",
+    "mime-types": "^3.0.1",
+    "multer": "^2.0.2",
+    "openai": "^6.8.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
-    "stripe": "^19.2.0"
+    "stripe": "^19.2.0",
+    "uuid": "^13.0.0"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
@@ -40,6 +43,7 @@
     "@nestjs/testing": "^11.0.1",
     "@types/express": "^5.0.0",
     "@types/jest": "^30.0.0",
+    "@types/multer": "^2.0.0",
     "@types/node": "^22.18.13",
     "@types/supertest": "^6.0.2",
     "eslint": "^9.18.0",

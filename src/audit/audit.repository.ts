@@ -20,6 +20,7 @@ export class AuditRepository {
       ai_description: suggestions.description,
       ai_tags: suggestions.tags,
       thumbnail_url: video.thumbnail,
+      ai_image_prompt: suggestions.thumbnailPrompts,
     }).select().single();
 
     if (error) throw new Error(error.message);
@@ -30,7 +31,6 @@ export class AuditRepository {
     try {
       this.logger.log(`Counting audits for user: ${userId}`);
       const client = this.supabase.getClient();
-      console.log('Supabase client obtained:', client);
       const { count, error } = await client
         .from('audits')
         .select('*', { count: 'exact' })
