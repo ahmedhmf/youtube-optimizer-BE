@@ -14,18 +14,15 @@ import {
 } from '@nestjs/common';
 import { YoutubeService } from '../youtube/youtube.service';
 import { AiService } from '../ai/ai.service';
-import { SupabaseService } from '../supabase/supabase.service';
 import { AuditRepository } from './audit.repository';
-import { AuditResponse } from './audit.types';
 import { SupabaseAuthGuard } from 'src/common/supabase-auth.guard';
 import { AiMessageConfiguration } from 'src/model/ai-configuration.model';
+import { SupabaseService } from '../supabase/supabase.service';
 import { SupabaseStorageService } from 'src/supabase/supabase-storage.service';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { diskStorage, memoryStorage } from 'multer';
-import path from 'path';
-import * as os from 'node:os';
-import * as fs from 'node:fs/promises';
+import { memoryStorage } from 'multer';
 import { PaginationQueryDto } from 'src/DTO/pagination-query.dto';
+import { DatabaseQueueService } from './database-queue.service'; // Add this import
 import { PaginatedResponse } from 'src/model/paginated-responce.model';
 
 const ALLOWED = [
@@ -45,6 +42,7 @@ export class AuditController {
     private readonly auditRepo: AuditRepository,
     private readonly supabase: SupabaseService,
     private readonly storage: SupabaseStorageService,
+    private readonly queueService: DatabaseQueueService, // Add this
   ) {}
 
   @Post('video')
@@ -52,48 +50,29 @@ export class AuditController {
   async analyzeVideo(
     @Body() body: { configuration: AiMessageConfiguration },
     @Req() req,
-  ): Promise<any> {
+  ): Promise<{ jobId: string; message: string }> {
+    // Change return type
+    const userId = req.user.id;
+    const email = req.user.email;
+    const jobId = `video-${userId}-${Date.now()}`;
     try {
-      const userId = req.user.id;
-      const email = req.user.email;
-
-      // Check usage limit
-      const usedCount = await this.auditRepo.countUserAudits(userId);
-      const maxFree = 100;
-      if (usedCount >= maxFree) {
-        throw new Error('Free plan limit reached. Please upgrade.');
-      }
-
-      // Process the video
-      const video = await this.youtubeService.getVideoData(
-        body.configuration.url,
-      );
-      const suggestions = await this.aiService.generateVideoSuggestions(
-        video,
-        body.configuration.language,
-        body.configuration.tone,
-        body.configuration.model,
-      );
-      const response: AuditResponse = { video, suggestions };
-
-      // Save the audit and get the saved item
-      const savedAudit = await this.auditRepo.saveAudit(
+      const queueJobId = await this.queueService.addVideoAnalysisJob({
         userId,
-        body.configuration.url,
-        response,
-      );
-
-      // Log usage event
-      const client = this.supabase.getClient();
-      await client.from('usage_events').insert({
-        user_id: userId,
-        event_type: 'audit_created',
+        email,
+        jobId,
+        type: 'youtube',
+        configuration: body.configuration,
       });
 
-      // Return only the newly saved audit item
-      return savedAudit;
+      return {
+        jobId: queueJobId,
+        message:
+          'Video analysis queued successfully. Check job status for progress.',
+      };
     } catch (error) {
-      throw error;
+      throw new BadRequestException(
+        `Failed to queue analysis: ${error.message}`,
+      );
     }
   }
 
@@ -108,72 +87,46 @@ export class AuditController {
   async analyzeUploadedVideo(
     @UploadedFile() file: Express.Multer.File,
     @Req() req,
-  ) {
-    if (!file)
+  ): Promise<{ jobId: string; message: string }> {
+    // Change return type
+    if (!file) {
       throw new BadRequestException(
         'No video file uploaded (field name: video).',
       );
-    if (!ALLOWED.includes(file.mimetype))
+    }
+    if (!ALLOWED.includes(file.mimetype)) {
       throw new BadRequestException(`Unsupported file type: ${file.mimetype}`);
+    }
 
     const userId = req.user.id;
-    const accessToken = req.headers.authorization?.replace('Bearer ', ''); // Extract token from header
+    const email = req.user.email;
+    const accessToken = req.headers.authorization?.replace('Bearer ', '');
+    const jobId = `upload-${userId}-${Date.now()}`;
 
-    const { publicUrl, key } = await this.storage.uploadVideo(
-      userId,
-      file,
-      accessToken,
-    );
-    const tmpPath = path.join(
-      os.tmpdir(),
-      `${Date.now()}-${file.originalname}`,
-    );
-    await fs.writeFile(tmpPath, file.buffer);
-    const transcript = await this.aiService
-      .transcribeLocalFile(tmpPath)
-      .finally(async () => {
-        try {
-          await fs.unlink(tmpPath);
-        } catch {}
+    try {
+      const queueJobId = await this.queueService.addVideoAnalysisJob({
+        userId,
+        email,
+        jobId,
+        type: 'upload',
+        fileData: {
+          buffer: file.buffer,
+          originalName: file.originalname,
+          mimetype: file.mimetype,
+        },
+        accessToken,
       });
-    const summary = await this.aiService.summarizeTranscript(transcript);
-    const suggestions = await this.aiService.generateVideoSuggestionsFromText(
-      `${summary}\n\n---- FULL TRANSCRIPT ----\n${transcript}`,
-    );
-    const response = {
-      video: {
-        id: key,
-        title: suggestions.titles?.[0] ?? 'Draft Video',
-        description: summary,
-        tags: suggestions.tags,
-        thumbnail: publicUrl,
-        views: 0,
-      },
-      suggestions,
-    };
 
-    const audit: AuditResponse = {
-      video: {
-        id: response.video.id,
-        title: response.video.title,
-        description: response.video.description,
-        tags: response.video.tags,
-        thumbnail: response.video.thumbnail,
-        publishedAt: '',
-        duration: '',
-        views: 0,
-        likes: 0,
-        comments: 0,
-      },
-      suggestions: {
-        titles: suggestions.titles,
-        description: suggestions.description,
-        tags: suggestions.tags,
-        thumbnailPrompts: suggestions.thumbnailPrompts,
-      },
-    };
-    
-    return await this.auditRepo.saveAudit(userId, publicUrl, audit);
+      return {
+        jobId: queueJobId,
+        message:
+          'Video upload queued successfully. Check job status for progress.',
+      };
+    } catch (error) {
+      throw new BadRequestException(
+        `Failed to queue analysis: ${error.message}`,
+      );
+    }
   }
 
   @Post('transcript')
@@ -181,62 +134,119 @@ export class AuditController {
   async analyzeTranscript(
     @Body() body: { configuration: AiMessageConfiguration; transcript: string },
     @Req() req,
-  ): Promise<any> {
+  ): Promise<{ jobId: string; message: string }> {
+    // Change return type
+    const userId = req.user.id;
+    const email = req.user.email;
+    const jobId = `transcript-${userId}-${Date.now()}`;
+
     try {
-      const userId = req.user.id;
-      const email = req.user.email;
+      const queueJobId = await this.queueService.addVideoAnalysisJob({
+        userId,
+        email,
+        jobId,
+        type: 'transcript',
+        transcript: body.transcript,
+        configuration: body.configuration,
+      });
 
-      // Check usage limit
-      const usedCount = await this.auditRepo.countUserAudits(userId);
-      const maxFree = 100;
-      if (usedCount >= maxFree) {
-        throw new Error('Free plan limit reached. Please upgrade.');
-      }
-
-      // Process the video
-      const summary = await this.aiService.summarizeTranscript(body.transcript);
-      // 5) Generate suggestions from transcript/summary
-      const suggestions = await this.aiService.generateVideoSuggestionsFromText(
-        `${summary}\n\n---- FULL TRANSCRIPT ----\n${body.transcript}`,
-      );
-
-      // 6) Save audit row (type: draft_upload)
-      const response = {
-        video: {
-          id: 'transcript-' + Date.now(),
-          title: suggestions.titles?.[0] ?? 'Draft Video',
-          description: summary,
-          tags: suggestions.tags,
-          thumbnail: '',
-          views: 0,
-        },
-        suggestions,
+      return {
+        jobId: queueJobId,
+        message:
+          'Transcript analysis queued successfully. Check job status for progress.',
       };
-
-      const audit: AuditResponse = {
-        video: {
-          id: response.video.id,
-          title: response.video.title,
-          description: response.video.description,
-          tags: response.video.tags,
-          thumbnail: response.video.thumbnail,
-          publishedAt: '',
-          duration: '',
-          views: 0,
-          likes: 0,
-          comments: 0,
-        },
-        suggestions: response.suggestions,
-      };
-
-      await this.auditRepo.saveAudit(userId, '', audit);
-
-      return this.auditRepo.saveAudit(userId, '', audit);
     } catch (error) {
-      throw error;
+      throw new BadRequestException(
+        `Failed to queue analysis: ${error.message}`,
+      );
     }
   }
 
+  // NEW ENDPOINTS for job management
+  @Get('job/:jobId/status')
+  @UseGuards(SupabaseAuthGuard)
+  async getJobStatus(@Param('jobId') jobId: string, @Req() req) {
+    try {
+      const status = await this.queueService.getJobStatus(jobId);
+
+      // Ensure user can only see their own jobs
+      if (status.data && status.data.userId !== req.user.id) {
+        throw new BadRequestException('Unauthorized access to job');
+      }
+      console.log('Job Status:', status);
+      return status;
+    } catch (error) {
+      throw new BadRequestException(
+        `Failed to get job status: ${error.message}`,
+      );
+    }
+  }
+
+  @Post('job/:jobId/cancel')
+  @UseGuards(SupabaseAuthGuard)
+  async cancelJob(@Param('jobId') jobId: string, @Req() req) {
+    try {
+      const job = await this.queueService.getJobStatus(jobId);
+
+      if (job.data && job.data.userId !== req.user.id) {
+        throw new BadRequestException('Unauthorized access to job');
+      }
+
+      const cancelled = await this.queueService.cancelJob(jobId);
+      return {
+        cancelled,
+        message: cancelled
+          ? 'Job cancelled successfully'
+          : 'Job not found or already completed',
+      };
+    } catch (error) {
+      throw new BadRequestException(`Failed to cancel job: ${error.message}`);
+    }
+  }
+
+  @Get('jobs')
+  @UseGuards(SupabaseAuthGuard)
+  async getUserJobs(@Req() req) {
+    try {
+      return await this.queueService.getUserJobs(req.user.id);
+    } catch (error) {
+      throw new BadRequestException(
+        `Failed to get user jobs: ${error.message}`,
+      );
+    }
+  }
+
+  @Post('job/:jobId/retry')
+  @UseGuards(SupabaseAuthGuard)
+  async retryJob(@Param('jobId') jobId: string, @Req() req) {
+    try {
+      const job = await this.queueService.getJobStatus(jobId);
+
+      // Check if user owns this job
+      if (job.data && job.data.userId !== req.user.id) {
+        throw new BadRequestException('Unauthorized access to job'); 
+      }
+
+      // Check if job can be retried
+      if (job.status !== 'failed' && job.status !== 'cancelled') {
+        throw new BadRequestException(
+          'Only failed or cancelled jobs can be retried',
+        );
+      }
+
+      const newJobId = await this.queueService.retryJob(jobId);
+
+      return {
+        success: true,
+        newJobId,
+        message: 'Job has been queued for retry with a new job ID',
+      };
+    } catch (error) {
+      throw new BadRequestException(`Failed to retry job: ${error.message}`);
+    }
+  }
+
+  // Keep your existing endpoints as they are
   @Get('history')
   @UseGuards(SupabaseAuthGuard)
   async getUserHistory(
@@ -245,20 +255,61 @@ export class AuditController {
   ): Promise<PaginatedResponse<any>> {
     const userId = req.user.id;
 
-    // Validate and sanitize query parameters
-    const paginationOptions = {
-      page: Math.max(1, Number(query.page) || 1),
-      limit: Math.min(50, Math.max(1, Number(query.limit) || 10)),
-      search: query.search?.trim(),
-      sortBy: query.sortBy || 'created_at',
-      sortOrder: query.sortOrder || 'desc',
-    };
+    // Validate and set defaults
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.min(50, Math.max(1, Number(query.limit) || 10));
+    const offset = (page - 1) * limit;
+    const search = query.search?.trim();
+    const sortBy = query.sortBy || 'created_at';
+    const sortOrder =
+      query.sortOrder === 'asc' ? { ascending: true } : { ascending: false };
+
+    const client = this.supabase.getClient();
 
     try {
-      return await this.auditRepo.getUserAuditsPaginated(
-        userId,
-        paginationOptions,
-      );
+      // Build the base query
+      let baseQuery = client
+        .from('audits')
+        .select('*', { count: 'exact' })
+        .eq('user_id', userId);
+
+      // Add search functionality if provided
+      if (search) {
+        baseQuery = baseQuery.or(
+          `audit_data->>video->title.ilike.%${search}%,audit_data->>video->description.ilike.%${search}%,url.ilike.%${search}%`,
+        );
+      }
+
+      // Get total count first
+      const { count: totalCount, error: countError } = await baseQuery;
+
+      if (countError) {
+        throw new Error(`Failed to get total count: ${countError.message}`);
+      }
+
+      // Get paginated data
+      const { data, error } = await baseQuery
+        .order(sortBy, sortOrder)
+        .range(offset, offset + limit - 1);
+
+      if (error) {
+        throw new Error(`Failed to fetch history: ${error.message}`);
+      }
+
+      const total = totalCount || 0;
+      const totalPages = Math.ceil(total / limit);
+
+      return {
+        data: data || [],
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages,
+          hasNext: page < totalPages,
+          hasPrev: page > 1,
+        },
+      };
     } catch (error) {
       throw error;
     }
@@ -267,14 +318,39 @@ export class AuditController {
   @Delete('delete/:id')
   @UseGuards(SupabaseAuthGuard)
   async deleteAudit(@Param('id') auditId: string, @Req() req) {
+    const userId = req.user.id;
+
     try {
-      const userId = req.user.id;
+      // Delete the audit and get thumbnail info
+      const deletedAudit = await this.auditRepo.deleteAudit(auditId, userId);
 
-      // Delete audit using repository
-      await this.auditRepo.deleteAudit(auditId, userId);
+      // If there's a thumbnail, delete it from storage
+      if (deletedAudit.thumbnail_url) {
+        try {
+          const accessToken = req.headers.authorization?.replace('Bearer ', '');
+          await this.storage.deleteFile(
+            deletedAudit.id,
+            deletedAudit.thumbnail_url,
+            accessToken,
+          );
+        } catch (storageError) {
+          console.warn(
+            'Failed to delete thumbnail from storage:',
+            storageError,
+          );
+          // Don't fail the whole operation if thumbnail deletion fails
+        }
+      }
 
-      return { message: 'Audit deleted successfully', id: auditId };
+      return {
+        success: true,
+        message: 'Audit deleted successfully',
+        deletedId: deletedAudit.id,
+      };
     } catch (error) {
+      if (error.message.includes('not found')) {
+        throw new BadRequestException('Audit not found or unauthorized');
+      }
       throw error;
     }
   }
