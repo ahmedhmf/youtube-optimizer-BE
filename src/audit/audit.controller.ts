@@ -15,7 +15,7 @@ import {
 import { YoutubeService } from '../youtube/youtube.service';
 import { AiService } from '../ai/ai.service';
 import { AuditRepository } from './audit.repository';
-import { SupabaseAuthGuard } from 'src/common/supabase-auth.guard';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AiMessageConfiguration } from 'src/model/ai-configuration.model';
 import { SupabaseService } from '../supabase/supabase.service';
 import { SupabaseStorageService } from 'src/supabase/supabase-storage.service';
@@ -46,7 +46,7 @@ export class AuditController {
   ) {}
 
   @Post('video')
-  @UseGuards(SupabaseAuthGuard)
+  @UseGuards(JwtAuthGuard)
   async analyzeVideo(
     @Body() body: { configuration: AiMessageConfiguration },
     @Req() req,
@@ -77,7 +77,7 @@ export class AuditController {
   }
 
   @Post('upload')
-  @UseGuards(SupabaseAuthGuard)
+  @UseGuards(JwtAuthGuard)
   @UseInterceptors(
     FileInterceptor('video', {
       storage: memoryStorage(),
@@ -130,7 +130,7 @@ export class AuditController {
   }
 
   @Post('transcript')
-  @UseGuards(SupabaseAuthGuard)
+  @UseGuards(JwtAuthGuard)
   async analyzeTranscript(
     @Body() body: { configuration: AiMessageConfiguration; transcript: string },
     @Req() req,
@@ -164,7 +164,7 @@ export class AuditController {
 
   // NEW ENDPOINTS for job management
   @Get('job/:jobId/status')
-  @UseGuards(SupabaseAuthGuard)
+  @UseGuards(JwtAuthGuard)
   async getJobStatus(@Param('jobId') jobId: string, @Req() req) {
     try {
       const status = await this.queueService.getJobStatus(jobId);
@@ -183,7 +183,7 @@ export class AuditController {
   }
 
   @Post('job/:jobId/cancel')
-  @UseGuards(SupabaseAuthGuard)
+  @UseGuards(JwtAuthGuard)
   async cancelJob(@Param('jobId') jobId: string, @Req() req) {
     try {
       const job = await this.queueService.getJobStatus(jobId);
@@ -205,7 +205,7 @@ export class AuditController {
   }
 
   @Get('jobs')
-  @UseGuards(SupabaseAuthGuard)
+  @UseGuards(JwtAuthGuard)
   async getUserJobs(@Req() req) {
     try {
       return await this.queueService.getUserJobs(req.user.id);
@@ -217,7 +217,7 @@ export class AuditController {
   }
 
   @Post('job/:jobId/retry')
-  @UseGuards(SupabaseAuthGuard)
+  @UseGuards(JwtAuthGuard)
   async retryJob(@Param('jobId') jobId: string, @Req() req) {
     try {
       const job = await this.queueService.getJobStatus(jobId);
@@ -248,7 +248,7 @@ export class AuditController {
 
   // Keep your existing endpoints as they are
   @Get('history')
-  @UseGuards(SupabaseAuthGuard)
+  @UseGuards(JwtAuthGuard)
   async getUserHistory(
     @Query() query: PaginationQueryDto,
     @Req() req,
@@ -316,7 +316,7 @@ export class AuditController {
   }
 
   @Delete('delete/:id')
-  @UseGuards(SupabaseAuthGuard)
+  @UseGuards(JwtAuthGuard)
   async deleteAudit(@Param('id') auditId: string, @Req() req) {
     const userId = req.user.id;
 

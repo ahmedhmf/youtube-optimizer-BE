@@ -3,6 +3,7 @@ import { AuditController } from './audit.controller';
 import { AiModule } from '../ai/ai.module';
 import { YoutubeModule } from '../youtube/youtube.module';
 import { SupabaseModule } from '../supabase/supabase.module';
+import { AuthModule } from '../auth/auth.module';
 import { AuditRepository } from './audit.repository';
 import { DatabaseQueueService } from './database-queue.service'; // Add this
 import { ScheduleModule } from '@nestjs/schedule'; // Add this for cron jobs
@@ -12,6 +13,7 @@ import { ScheduleModule } from '@nestjs/schedule'; // Add this for cron jobs
     AiModule,
     YoutubeModule,
     SupabaseModule,
+    AuthModule,
     ScheduleModule.forRoot(), // Add this to enable cron jobs
   ],
   controllers: [AuditController],

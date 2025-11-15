@@ -1,0 +1,69 @@
+import {
+  Controller,
+  Post,
+  Get,
+  Put,
+  Body,
+  UseGuards,
+  Req,
+} from '@nestjs/common';
+import { AuthService } from './auth.service';
+import { JwtAuthGuard } from './jwt-auth.guard';
+import {
+  LoginDto,
+  RegisterDto,
+  RefreshTokenDto,
+  UpdateProfileDto,
+} from './dto';
+import { User } from './interfaces/user.interface';
+
+@Controller('auth')
+export class AuthController {
+  constructor(private readonly authService: AuthService) {}
+
+  @Post('register')
+  async register(@Body() registerDto: RegisterDto) {
+    return this.authService.register(registerDto);
+  }
+
+  @Post('login')
+  async login(@Body() loginDto: LoginDto) {
+    return this.authService.login(loginDto);
+  }
+
+  @Post('logout')
+  @UseGuards(JwtAuthGuard)
+  async logout(@Req() req) {
+    return this.authService.logout(req.user.id);
+  }
+
+  @Post('refresh')
+  async refresh(@Body() refreshDto: RefreshTokenDto) {
+    return this.authService.refresh(refreshDto.refreshToken);
+  }
+
+  @Get('profile')
+  @UseGuards(JwtAuthGuard)
+  async getProfile(@Req() req): Promise<User> {
+    return this.authService.getProfile(req.user.id);
+  }
+
+  @Put('profile')
+  @UseGuards(JwtAuthGuard)
+  async updateProfile(
+    @Req() req,
+    @Body() updateProfileDto: UpdateProfileDto,
+  ): Promise<User> {
+    return this.authService.updateProfile(req.user.id, updateProfileDto);
+  }
+
+  @Get('test')
+  @UseGuards(JwtAuthGuard)
+  testAuth(@Req() req: any) {
+    return {
+      message: 'JWT Auth working!',
+      user: req.user,
+      timestamp: new Date().toISOString(),
+    };
+  }
+}

@@ -1,0 +1,313 @@
+import {
+  Injectable,
+  UnauthorizedException,
+  BadRequestException,
+  ConflictException,
+} from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import { SupabaseService } from '../supabase/supabase.service';
+import * as bcrypt from 'bcryptjs';
+import * as crypto from 'crypto';
+import { LoginDto, RegisterDto } from './dto';
+import { User, AuthResponse } from './interfaces/user.interface';
+
+@Injectable()
+export class AuthService {
+  constructor(
+    private readonly supabase: SupabaseService,
+    private readonly jwtService: JwtService,
+  ) {}
+
+  async register(registerDto: RegisterDto): Promise<AuthResponse> {
+    const { email, password, name } = registerDto;
+    const client = this.supabase.getClient();
+
+    console.log('Registration attempt for:', email);
+
+    // Check if user already exists
+    const { data: existingUser, error: checkError } = await client
+      .from('profiles')
+      .select('id')
+      .eq('email', email)
+      .single();
+
+    if (checkError && checkError.code !== 'PGRST116') {
+      console.error('Error checking existing user:', checkError);
+      throw new BadRequestException(`Database error: ${checkError.message}`);
+    }
+
+    if (existingUser) {
+      throw new ConflictException('User with this email already exists');
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 12);
+    console.log('Password hashed successfully');
+
+    // Generate a UUID for the new user
+    const userId = crypto.randomUUID();
+    console.log('Generated user ID:', userId);
+
+    // Create user profile
+    const { data: profile, error: profileError } = await client
+      .from('profiles')
+      .insert({
+        id: userId,
+        email,
+        name: name || email.split('@')[0],
+        password_hash: hashedPassword,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+
+    if (profileError) {
+      console.error('Profile creation failed:', profileError);
+      throw new BadRequestException(
+        `Profile creation failed: ${profileError.message}`,
+      );
+    }
+
+    console.log('Profile created successfully:', profile.id);
+
+    const user: User = {
+      id: profile.id,
+      email: profile.email,
+      name: profile.name,
+      createdAt: new Date(profile.created_at),
+      updatedAt: new Date(profile.updated_at),
+    };
+
+    const tokens = await this.generateTokens(user.id);
+
+    // Store refresh token
+    await this.storeRefreshToken(user.id, tokens.refreshToken);
+
+    return {
+      ...tokens,
+      user,
+    };
+  }
+
+  async login(loginDto: LoginDto): Promise<AuthResponse> {
+    const { email, password } = loginDto;
+    const client = this.supabase.getClient();
+
+    // Get user by email
+    const { data: profile, error } = await client
+      .from('profiles')
+      .select('*')
+      .eq('email', email)
+      .single();
+
+    if (error || !profile) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    // Verify password
+    const isPasswordValid = await bcrypt.compare(
+      password,
+      profile.password_hash,
+    );
+    if (!isPasswordValid) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    const user: User = {
+      id: profile.id,
+      email: profile.email,
+      name: profile.name,
+      createdAt: new Date(profile.created_at),
+      updatedAt: new Date(profile.updated_at),
+    };
+
+    const tokens = await this.generateTokens(user.id);
+
+    // Store refresh token
+    await this.storeRefreshToken(user.id, tokens.refreshToken);
+
+    // Update last login
+    await client
+      .from('profiles')
+      .update({
+        last_login: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', user.id);
+
+    return {
+      ...tokens,
+      user,
+    };
+  }
+
+  async logout(userId: string): Promise<{ success: boolean }> {
+    const client = this.supabase.getClient();
+
+    // Invalidate all refresh tokens for user
+    await client.from('refresh_tokens').delete().eq('user_id', userId);
+
+    return { success: true };
+  }
+
+  async refresh(
+    refreshToken: string,
+  ): Promise<{ accessToken: string; refreshToken?: string }> {
+    const client = this.supabase.getClient();
+
+    // Validate refresh token
+    const { data: tokenData, error } = await client
+      .from('refresh_tokens')
+      .select('user_id, expires_at')
+      .eq('token', refreshToken)
+      .single();
+
+    if (error || !tokenData) {
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+
+    // Check if token is expired
+    if (new Date(tokenData.expires_at) < new Date()) {
+      // Clean up expired token
+      await client.from('refresh_tokens').delete().eq('token', refreshToken);
+
+      throw new UnauthorizedException('Refresh token expired');
+    }
+
+    // Generate new access token
+    const accessToken = this.jwtService.sign({ sub: tokenData.user_id });
+
+    // Optionally generate new refresh token (rotate refresh tokens)
+    const shouldRotateRefreshToken = true;
+    let newRefreshToken: string | undefined;
+
+    if (shouldRotateRefreshToken) {
+      // Delete old refresh token
+      await client.from('refresh_tokens').delete().eq('token', refreshToken);
+
+      // Generate new refresh token
+      newRefreshToken = await this.generateRefreshToken();
+      await this.storeRefreshToken(tokenData.user_id, newRefreshToken);
+    }
+
+    return {
+      accessToken,
+      refreshToken: newRefreshToken,
+    };
+  }
+
+  async getProfile(userId: string): Promise<User> {
+    const client = this.supabase.getClient();
+    console.log('AuthService - getProfile called for ID:', userId);
+
+    const { data: profile, error } = await client
+      .from('profiles')
+      .select('*')
+      .eq('id', userId)
+      .single();
+
+    console.log('AuthService - database query result:', { profile: !!profile, error });
+    
+    if (error) {
+      console.log('AuthService - database error:', error);
+      throw new UnauthorizedException(`Database error: ${error.message}`);
+    }
+    
+    if (!profile) {
+      throw new UnauthorizedException('User not found');
+    }
+
+    return {
+      id: profile.id,
+      email: profile.email,
+      name: profile.name,
+      createdAt: new Date(profile.created_at),
+      updatedAt: new Date(profile.updated_at),
+    };
+  }
+
+  async updateProfile(userId: string, updates: Partial<User>): Promise<User> {
+    const client = this.supabase.getClient();
+
+    const allowedUpdates = ['name'];
+    const filteredUpdates: any = {};
+
+    Object.keys(updates).forEach((key) => {
+      if (allowedUpdates.includes(key)) {
+        filteredUpdates[key] = updates[key as keyof User];
+      }
+    });
+
+    filteredUpdates.updated_at = new Date().toISOString();
+
+    const { data: profile, error } = await client
+      .from('profiles')
+      .update(filteredUpdates)
+      .eq('id', userId)
+      .select()
+      .single();
+
+    if (error || !profile) {
+      throw new BadRequestException('Failed to update profile');
+    }
+
+    return {
+      id: profile.id,
+      email: profile.email,
+      name: profile.name,
+      createdAt: new Date(profile.created_at),
+      updatedAt: new Date(profile.updated_at),
+    };
+  }
+
+  async validateUser(userId: string): Promise<User | null> {
+    try {
+      console.log('AuthService - validateUser called for ID:', userId);
+      const user = await this.getProfile(userId);
+      console.log('AuthService - user found:', user.email);
+      return user;
+    } catch (error) {
+      console.log('AuthService - validateUser error:', error.message);
+      return null;
+    }
+  }
+
+  private async generateTokens(userId: string) {
+    console.log('AuthService - generateTokens for user:', userId);
+    console.log('AuthService - JWT_SECRET available:', !!process.env.JWT_SECRET);
+    const accessToken = this.jwtService.sign({ sub: userId });
+    console.log('AuthService - Generated token:', accessToken.substring(0, 50) + '...');
+    const refreshToken = await this.generateRefreshToken();
+
+    return {
+      accessToken,
+      refreshToken,
+    };
+  }
+
+  private async generateRefreshToken(): Promise<string> {
+    const token = this.jwtService.sign(
+      { type: 'refresh', random: Math.random() },
+      { expiresIn: '7d' },
+    );
+    return token;
+  }
+
+  private async storeRefreshToken(
+    userId: string,
+    refreshToken: string,
+  ): Promise<void> {
+    const client = this.supabase.getClient();
+
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 7); // 7 days
+
+    await client.from('refresh_tokens').insert({
+      user_id: userId,
+      token: refreshToken,
+      expires_at: expiresAt.toISOString(),
+      created_at: new Date().toISOString(),
+    });
+  }
+}
