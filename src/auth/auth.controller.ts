@@ -21,6 +21,8 @@ import {
   UpdateProfileDto,
   SocialLoginRequestDto,
   SocialProvider,
+  ForgotPasswordDto,
+  ResetPasswordDto,
 } from './dto';
 import { User } from './interfaces/user.interface';
 
@@ -100,7 +102,7 @@ export class AuthController {
   async googleLogin(@Body() body: SocialLoginRequestDto) {
     try {
       console.log('Google login request body:', body);
-      
+
       if (!body.token) {
         throw new BadRequestException('Google token is required');
       }
@@ -125,5 +127,31 @@ export class AuthController {
       code: body.code,
       provider: SocialProvider.GITHUB,
     });
+  }
+
+  @Post('forgot-password')
+  async requestPasswordReset(@Body() forgotPasswordDto: ForgotPasswordDto) {
+    try {
+      console.log('Password reset requested for:', forgotPasswordDto.email);
+      const result =
+        await this.authService.requestPasswordReset(forgotPasswordDto);
+      return result;
+    } catch (error) {
+      console.error('Password reset request error:', error);
+      throw error;
+    }
+  }
+
+  @Post('reset-password')
+  async resetPassword(@Body() resetPasswordDto: ResetPasswordDto) {
+    try {
+      console.log('Password reset attempt with token');
+      const result = await this.authService.resetPassword(resetPasswordDto);
+      console.log('Password reset successful for token:', result);
+      return result;
+    } catch (error) {
+      console.error('Password reset error:', error);
+      throw error;
+    }
   }
 }

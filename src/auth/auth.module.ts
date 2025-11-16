@@ -18,9 +18,13 @@ import { SupabaseModule } from '../supabase/supabase.module';
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => {
-        const secret = configService.get<string>('JWT_SECRET') || 'fallback-secret-key';
-        console.log('JwtModule - Using secret:', secret.substring(0, 10) + '...');
+      useFactory: (configService: ConfigService) => {
+        const secret =
+          configService.get<string>('JWT_SECRET') || 'fallback-secret-key';
+        console.log(
+          'JwtModule - Using secret:',
+          secret.substring(0, 10) + '...',
+        );
         return {
           secret,
           signOptions: { expiresIn: '15m' },
@@ -30,7 +34,18 @@ import { SupabaseModule } from '../supabase/supabase.module';
     }),
   ],
   controllers: [AuthController, AdminController],
-  providers: [AuthService, JwtStrategy, RolesGuard, SocialAuthService],
-  exports: [AuthService, JwtStrategy, RolesGuard, SocialAuthService, PassportModule],
+  providers: [
+    AuthService,
+    JwtStrategy,
+    RolesGuard,
+    SocialAuthService,
+  ],
+  exports: [
+    AuthService,
+    JwtStrategy,
+    RolesGuard,
+    SocialAuthService,
+    PassportModule,
+  ],
 })
 export class AuthModule {}

@@ -8,7 +8,7 @@ import { JwtService } from '@nestjs/jwt';
 import { SupabaseService } from '../supabase/supabase.service';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
-import { LoginDto, RegisterDto, SocialLoginDto } from './dto';
+import { LoginDto, RegisterDto, SocialLoginDto, ForgotPasswordDto, ResetPasswordDto } from './dto';
 import { User, AuthResponse } from './interfaces/user.interface';
 import { UserRole } from './types/roles.types';
 import { SocialAuthService } from './social-auth.service';
@@ -445,5 +445,124 @@ export class AuthService {
       ...tokens,
       user,
     };
+  }
+
+  /**
+   * Request password reset for a user using Supabase Auth
+   * @param forgotPasswordDto Contains the user's email
+   * @returns Success message
+   */
+  async requestPasswordReset(forgotPasswordDto: ForgotPasswordDto): Promise<{ message: string }> {
+    const { email } = forgotPasswordDto;
+    const client = this.supabase.getClient();
+
+    console.log('Password reset requested for:', email);
+
+    // First check if user exists in profiles table
+    const { data: profile, error: profileError } = await client
+      .from('profiles')
+      .select('id, email')
+      .eq('email', email)
+      .single();
+
+    if (profileError && profileError.code !== 'PGRST116') {
+      console.error('Database error:', profileError);
+    }
+
+    if (profile) {
+      console.log('User found in profiles table:', profile.email);
+    } else {
+      console.log('User not found in profiles table for:', email);
+    }
+
+    // Use Supabase Auth to send password reset email
+    const { data, error } = await client.auth.resetPasswordForEmail(email, {
+      redirectTo: `${process.env.FRONTEND_URL || 'http://localhost:4200'}/reset-password`,
+    });
+
+    if (error) {
+      console.error('Supabase password reset error:', error);
+      console.error('Error details:', JSON.stringify(error, null, 2));
+      // For debugging, let's see the actual error
+      throw new BadRequestException(`Password reset failed: ${error.message}`);
+    }
+
+    console.log('Supabase password reset response:', data);
+
+    console.log(`Password reset email sent to: ${email}`);
+
+    // Always return success message (don't reveal if email exists)
+    return { 
+      message: 'If this email exists, you will receive reset instructions.' 
+    };
+  }
+
+  /**
+   * Reset password using Supabase Auth (called from frontend after email verification)
+   * @param resetPasswordDto Contains the access token and new password
+   * @returns Success message
+   */
+  async resetPassword(resetPasswordDto: ResetPasswordDto): Promise<{ message: string }> {
+    const { token, newPassword } = resetPasswordDto;
+    const client = this.supabase.getClient();
+
+    console.log('Password reset attempt with Supabase token');
+
+    try {
+      // Set the session using the token from the email link
+      const { data: { user }, error: sessionError } = await client.auth.setSession({
+        access_token: token,
+        refresh_token: token, // For password reset, access_token can be used as refresh_token
+      });
+
+      if (sessionError || !user) {
+        throw new UnauthorizedException('Invalid or expired reset token');
+      }
+
+      // Update the user's password using Supabase Auth
+      const { error: updateError } = await client.auth.updateUser({
+        password: newPassword
+      });
+
+      if (updateError) {
+        throw new BadRequestException(`Failed to update password: ${updateError.message}`);
+      }
+
+      // Optional: Invalidate all existing refresh tokens for this user
+      await this.invalidateAllUserTokens(user.id);
+
+      console.log(`Password successfully reset for user: ${user.email}`);
+
+      return { message: 'Password reset successfully' };
+    } catch (error) {
+      console.error('Password reset error:', error);
+      if (error instanceof UnauthorizedException || error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new BadRequestException('Failed to reset password');
+    }
+  }
+
+
+
+  /**
+   * Invalidate all refresh tokens for a user
+   * @param userId The user ID
+   */
+  private async invalidateAllUserTokens(userId: string): Promise<void> {
+    const client = this.supabase.getClient();
+    
+    try {
+      // Delete all refresh tokens for this user
+      await client
+        .from('refresh_tokens')
+        .delete()
+        .eq('user_id', userId);
+
+      console.log(`Invalidated all tokens for user: ${userId}`);
+    } catch (error) {
+      console.error('Error invalidating user tokens:', error);
+      // Don't throw error here as password reset should still succeed
+    }
   }
 }
