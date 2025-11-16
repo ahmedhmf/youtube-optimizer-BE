@@ -4,21 +4,21 @@ import { AppModule } from './app.module';
 import * as dotenv from 'dotenv';
 import * as bodyParser from 'body-parser';
 import helmet from 'helmet';
-import { SecurityConfigService } from './common/security-config.service';
+import { EnvironmentService } from './common/environment.service';
 
 dotenv.config();
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // Initialize security configuration
-  const securityConfig = new SecurityConfigService();
+  // Get environment service from the application context
+  const environmentService = app.get(EnvironmentService);
   
   // Security headers with Helmet
-  app.use(helmet(securityConfig.getSecurityConfig()));
+  app.use(helmet(environmentService.getSecurityHeadersConfig()));
 
   // Enable CORS with environment-aware configuration
-  app.enableCors(securityConfig.getCorsConfig());
+  app.enableCors(environmentService.getCorsConfig());
 
   // Enable validation pipes
   app.useGlobalPipes(
@@ -29,10 +29,22 @@ async function bootstrap() {
     }),
   );
 
-  // Body parser for large payloads
-  app.use(bodyParser.json({ limit: '10mb' }));
-  app.use(bodyParser.urlencoded({ limit: '10mb', extended: true }));
+  // Body parser with environment-configured limits
+  const maxSize = `${Math.floor(environmentService.getMaxFileSize() / 1024 / 1024)}mb`;
+  app.use(bodyParser.json({ limit: maxSize }));
+  app.use(bodyParser.urlencoded({ limit: maxSize, extended: true }));
 
-  await app.listen(process.env.PORT ?? 3000);
+  // Force HTTPS redirect in production
+  if (environmentService.shouldForceHttps()) {
+    app.use((req, res, next) => {
+      if (req.header('x-forwarded-proto') !== 'https') {
+        res.redirect(`https://${req.header('host')}${req.url}`);
+      } else {
+        next();
+      }
+    });
+  }
+
+  await app.listen(environmentService.getPort());
 }
 bootstrap();
