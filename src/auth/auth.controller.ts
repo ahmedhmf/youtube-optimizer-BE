@@ -6,6 +6,7 @@ import {
   Body,
   UseGuards,
   Req,
+  BadRequestException,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RolesGuard } from './guards/roles.guard';
@@ -18,6 +19,8 @@ import {
   RegisterDto,
   RefreshTokenDto,
   UpdateProfileDto,
+  SocialLoginRequestDto,
+  SocialProvider,
 } from './dto';
 import { User } from './interfaces/user.interface';
 
@@ -91,5 +94,36 @@ export class AuthController {
       user: req.user,
       timestamp: new Date().toISOString(),
     };
+  }
+
+  @Post('social/google')
+  async googleLogin(@Body() body: SocialLoginRequestDto) {
+    try {
+      console.log('Google login request body:', body);
+      
+      if (!body.token) {
+        throw new BadRequestException('Google token is required');
+      }
+
+      const result = await this.authService.socialLogin({
+        token: body.token,
+        provider: SocialProvider.GOOGLE,
+      });
+
+      console.log('Google login successful for user:', result.user.email);
+      return result;
+    } catch (error) {
+      console.error('Google login error:', error);
+      throw error;
+    }
+  }
+
+  @Post('social/github')
+  async githubLogin(@Body() body: SocialLoginRequestDto) {
+    console.log('GitHub login request body:', body);
+    return await this.authService.socialLogin({
+      code: body.code,
+      provider: SocialProvider.GITHUB,
+    });
   }
 }

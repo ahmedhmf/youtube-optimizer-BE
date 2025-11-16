@@ -8,15 +8,18 @@ import { JwtService } from '@nestjs/jwt';
 import { SupabaseService } from '../supabase/supabase.service';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
-import { LoginDto, RegisterDto } from './dto';
+import { LoginDto, RegisterDto, SocialLoginDto } from './dto';
 import { User, AuthResponse } from './interfaces/user.interface';
 import { UserRole } from './types/roles.types';
+import { SocialAuthService } from './social-auth.service';
+import { SocialProvider, SocialUserInfo } from './dto/social-login.dto';
 
 @Injectable()
 export class AuthService {
   constructor(
     private readonly supabase: SupabaseService,
     private readonly jwtService: JwtService,
+    private readonly socialAuthService: SocialAuthService,
   ) {}
 
   async register(registerDto: RegisterDto): Promise<AuthResponse> {
@@ -78,6 +81,8 @@ export class AuthService {
       email: profile.email,
       name: profile.name,
       role: profile.role || UserRole.USER,
+      picture: profile.picture,
+      provider: profile.provider || 'email',
       createdAt: new Date(profile.created_at),
       updatedAt: new Date(profile.updated_at),
     };
@@ -122,6 +127,8 @@ export class AuthService {
       email: profile.email,
       name: profile.name,
       role: profile.role || UserRole.USER,
+      picture: profile.picture,
+      provider: profile.provider || 'email',
       createdAt: new Date(profile.created_at),
       updatedAt: new Date(profile.updated_at),
     };
@@ -227,6 +234,8 @@ export class AuthService {
       email: profile.email,
       name: profile.name,
       role: profile.role || UserRole.USER,
+      picture: profile.picture,
+      provider: profile.provider || 'email',
       createdAt: new Date(profile.created_at),
       updatedAt: new Date(profile.updated_at),
     };
@@ -262,6 +271,8 @@ export class AuthService {
       email: profile.email,
       name: profile.name,
       role: profile.role || UserRole.USER,
+      picture: profile.picture,
+      provider: profile.provider || 'email',
       createdAt: new Date(profile.created_at),
       updatedAt: new Date(profile.updated_at),
     };
@@ -322,5 +333,117 @@ export class AuthService {
       expires_at: expiresAt.toISOString(),
       created_at: new Date().toISOString(),
     });
+  }
+
+  async socialLogin(socialLoginDto: SocialLoginDto): Promise<AuthResponse> {
+    let socialUserInfo: SocialUserInfo;
+
+    // Validate social provider token/code
+    if (socialLoginDto.provider === SocialProvider.GOOGLE) {
+      if (!socialLoginDto.token) {
+        throw new BadRequestException('Google token is required');
+      }
+      socialUserInfo = await this.socialAuthService.validateGoogleToken(
+        socialLoginDto.token,
+      );
+    } else if (socialLoginDto.provider === SocialProvider.GITHUB) {
+      if (!socialLoginDto.code) {
+        throw new BadRequestException('GitHub code is required');
+      }
+      socialUserInfo = await this.socialAuthService.validateGitHubCode(
+        socialLoginDto.code,
+      );
+    } else {
+      throw new BadRequestException('Unsupported social provider');
+    }
+
+    // Check if user exists with this social provider
+    const client = this.supabase.getClient();
+    const { data: existingUser, error: queryError } = await client
+      .from('profiles')
+      .select('*')
+      .eq('email', socialUserInfo.email)
+      .single();
+
+    let user: User;
+
+    if (existingUser) {
+      // Update existing user with social info
+      const { data: updatedProfile, error: updateError } = await client
+        .from('profiles')
+        .update({
+          name: existingUser.name || socialUserInfo.name,
+          picture: socialUserInfo.picture,
+          provider: socialUserInfo.provider,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existingUser.id)
+        .select()
+        .single();
+
+      if (updateError) {
+        throw new BadRequestException(
+          `Failed to update user profile: ${updateError.message}`,
+        );
+      }
+
+      user = {
+        id: updatedProfile.id,
+        email: updatedProfile.email,
+        name: updatedProfile.name,
+        role: updatedProfile.role || UserRole.USER,
+        picture: updatedProfile.picture,
+        provider: updatedProfile.provider,
+        createdAt: new Date(updatedProfile.created_at),
+        updatedAt: new Date(updatedProfile.updated_at),
+      };
+    } else {
+      // Create new user for social login
+      const userId = crypto.randomUUID();
+
+      const { data: newProfile, error: createError } = await client
+        .from('profiles')
+        .insert({
+          id: userId,
+          email: socialUserInfo.email,
+          name: socialUserInfo.name,
+          role: UserRole.USER,
+          picture: socialUserInfo.picture,
+          provider: socialUserInfo.provider,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          // No password_hash for social users
+        })
+        .select()
+        .single();
+
+      if (createError) {
+        throw new BadRequestException(
+          `Failed to create user profile: ${createError.message}`,
+        );
+      }
+
+      user = {
+        id: newProfile.id,
+        email: newProfile.email,
+        name: newProfile.name,
+        role: newProfile.role || UserRole.USER,
+        picture: newProfile.picture,
+        provider: newProfile.provider,
+        createdAt: new Date(newProfile.created_at),
+        updatedAt: new Date(newProfile.updated_at),
+      };
+    }
+
+    // Generate JWT tokens
+    const tokens = await this.generateTokens(user.id);
+
+    // Store refresh token
+    await this.storeRefreshToken(user.id, tokens.refreshToken);
+
+    return {
+      ...tokens,
+      user,
+    };
   }
 }
