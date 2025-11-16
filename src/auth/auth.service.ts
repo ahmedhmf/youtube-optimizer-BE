@@ -13,6 +13,7 @@ import { User, AuthResponse } from './interfaces/user.interface';
 import { UserRole } from './types/roles.types';
 import { SocialAuthService } from './social-auth.service';
 import { SocialProvider, SocialUserInfo } from './dto/social-login.dto';
+import { AccountLockoutService } from './account-lockout.service';
 
 @Injectable()
 export class AuthService {
@@ -20,6 +21,7 @@ export class AuthService {
     private readonly supabase: SupabaseService,
     private readonly jwtService: JwtService,
     private readonly socialAuthService: SocialAuthService,
+    private readonly accountLockoutService: AccountLockoutService,
   ) {}
 
   async register(registerDto: RegisterDto): Promise<AuthResponse> {
@@ -102,6 +104,14 @@ export class AuthService {
     const { email, password } = loginDto;
     const client = this.supabase.getClient();
 
+    // Check if account is locked
+    const lockoutStatus = await this.accountLockoutService.checkLockoutStatus(email);
+    if (lockoutStatus.isLocked) {
+      throw new UnauthorizedException(
+        `Account temporarily locked. Try again after ${lockoutStatus.lockoutUntil?.toLocaleString()}. Too many failed login attempts.`
+      );
+    }
+
     // Get user by email
     const { data: profile, error } = await client
       .from('profiles')
@@ -110,6 +120,8 @@ export class AuthService {
       .single();
 
     if (error || !profile) {
+      // Record failed attempt for invalid email
+      await this.accountLockoutService.recordFailedAttempt(email);
       throw new UnauthorizedException('Invalid credentials');
     }
 
@@ -119,7 +131,17 @@ export class AuthService {
       profile.password_hash,
     );
     if (!isPasswordValid) {
-      throw new UnauthorizedException('Invalid credentials');
+      // Record failed attempt for invalid password
+      const lockoutResult = await this.accountLockoutService.recordFailedAttempt(email);
+      
+      let errorMessage = 'Invalid credentials';
+      if (lockoutResult.isLocked) {
+        errorMessage = `Account locked after ${lockoutResult.totalFailedAttempts} failed attempts. Try again after ${lockoutResult.lockoutUntil?.toLocaleString()}.`;
+      } else if (lockoutResult.remainingAttempts <= 2) {
+        errorMessage = `Invalid credentials. ${lockoutResult.remainingAttempts} attempts remaining before account lockout.`;
+      }
+      
+      throw new UnauthorizedException(errorMessage);
     }
 
     const user: User = {
@@ -132,6 +154,9 @@ export class AuthService {
       createdAt: new Date(profile.created_at),
       updatedAt: new Date(profile.updated_at),
     };
+
+    // Successful login - reset any lockout
+    await this.accountLockoutService.resetLockout(email);
 
     const tokens = await this.generateTokens(user.id);
 
@@ -336,25 +361,33 @@ export class AuthService {
   }
 
   async socialLogin(socialLoginDto: SocialLoginDto): Promise<AuthResponse> {
+    console.log(`Social login attempt with provider: ${socialLoginDto.provider}`);
     let socialUserInfo: SocialUserInfo;
 
-    // Validate social provider token/code
-    if (socialLoginDto.provider === SocialProvider.GOOGLE) {
-      if (!socialLoginDto.token) {
-        throw new BadRequestException('Google token is required');
+    try {
+      // Validate social provider token/code
+      if (socialLoginDto.provider === SocialProvider.GOOGLE) {
+        if (!socialLoginDto.token) {
+          throw new BadRequestException('Google token is required');
+        }
+        socialUserInfo = await this.socialAuthService.validateGoogleToken(
+          socialLoginDto.token,
+        );
+      } else if (socialLoginDto.provider === SocialProvider.GITHUB) {
+        if (!socialLoginDto.code) {
+          throw new BadRequestException('GitHub code is required');
+        }
+        socialUserInfo = await this.socialAuthService.validateGitHubCode(
+          socialLoginDto.code,
+        );
+      } else {
+        throw new BadRequestException('Unsupported social provider');
       }
-      socialUserInfo = await this.socialAuthService.validateGoogleToken(
-        socialLoginDto.token,
-      );
-    } else if (socialLoginDto.provider === SocialProvider.GITHUB) {
-      if (!socialLoginDto.code) {
-        throw new BadRequestException('GitHub code is required');
-      }
-      socialUserInfo = await this.socialAuthService.validateGitHubCode(
-        socialLoginDto.code,
-      );
-    } else {
-      throw new BadRequestException('Unsupported social provider');
+
+      console.log(`Social login validated for user: ${socialUserInfo.email}`);
+    } catch (error) {
+      console.error('Social login validation failed:', error);
+      throw error;
     }
 
     // Check if user exists with this social provider
@@ -368,15 +401,22 @@ export class AuthService {
     let user: User;
 
     if (existingUser) {
-      // Update existing user with social info
+      // User exists - update their social info but preserve existing password_hash if they have one
+      const updateData: any = {
+        name: existingUser.name || socialUserInfo.name,
+        picture: socialUserInfo.picture,
+        updated_at: new Date().toISOString(),
+      };
+
+      // Only update provider if current provider is 'email' or if they don't have a password
+      // This allows linking social accounts to existing email accounts
+      if (existingUser.provider === 'email' || !existingUser.password_hash) {
+        updateData.provider = socialUserInfo.provider;
+      }
+
       const { data: updatedProfile, error: updateError } = await client
         .from('profiles')
-        .update({
-          name: existingUser.name || socialUserInfo.name,
-          picture: socialUserInfo.picture,
-          provider: socialUserInfo.provider,
-          updated_at: new Date().toISOString(),
-        })
+        .update(updateData)
         .eq('id', existingUser.id)
         .select()
         .single();
@@ -400,6 +440,13 @@ export class AuthService {
     } else {
       // Create new user for social login
       const userId = crypto.randomUUID();
+      
+      // Generate a placeholder password hash for social users (they don't use passwords)
+      // This satisfies the NOT NULL constraint while making it clear this is not a real password
+      const placeholderPasswordHash = await bcrypt.hash(
+        `social-login-${userId}-${Date.now()}`, 
+        12
+      );
 
       const { data: newProfile, error: createError } = await client
         .from('profiles')
@@ -410,9 +457,9 @@ export class AuthService {
           role: UserRole.USER,
           picture: socialUserInfo.picture,
           provider: socialUserInfo.provider,
+          password_hash: placeholderPasswordHash, // Required by database, but won't be used
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
-          // No password_hash for social users
         })
         .select()
         .single();

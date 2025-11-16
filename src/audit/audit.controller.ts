@@ -12,6 +12,7 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { YoutubeService } from '../youtube/youtube.service';
 import { AiService } from '../ai/ai.service';
 import { AuditRepository } from './audit.repository';
@@ -50,6 +51,7 @@ export class AuditController {
   ) {}
 
   @Post('video')
+  @Throttle({ default: { limit: 3, ttl: 300000 } }) // 3 AI requests per 5 minutes
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.USER, UserRole.PREMIUM, UserRole.MODERATOR, UserRole.ADMIN)
   async analyzeVideo(
@@ -82,6 +84,7 @@ export class AuditController {
   }
 
   @Post('upload')
+  @Throttle({ default: { limit: 5, ttl: 300000 } }) // 5 uploads per 5 minutes
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(
     FileInterceptor('video', {
@@ -135,6 +138,7 @@ export class AuditController {
   }
 
   @Post('transcript')
+  @Throttle({ default: { limit: 3, ttl: 300000 } }) // 3 transcript analyses per 5 minutes
   @UseGuards(JwtAuthGuard)
   async analyzeTranscript(
     @Body() body: { configuration: AiMessageConfiguration; transcript: string },

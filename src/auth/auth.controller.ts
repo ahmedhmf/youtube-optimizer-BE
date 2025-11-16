@@ -8,6 +8,7 @@ import {
   Req,
   BadRequestException,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { RolesGuard } from './guards/roles.guard';
 import { Roles } from './decorators/roles.decorator';
@@ -31,11 +32,13 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post('register')
+  @Throttle({ default: { limit: 3, ttl: 300000 } }) // 3 attempts per 5 minutes
   async register(@Body() registerDto: RegisterDto) {
     return this.authService.register(registerDto);
   }
 
   @Post('login')
+  @Throttle({ default: { limit: 5, ttl: 60000 } }) // 5 attempts per minute
   async login(@Body() loginDto: LoginDto) {
     return this.authService.login(loginDto);
   }
@@ -90,6 +93,7 @@ export class AuthController {
   @Get('test/premium')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @RequirePermissions('canUsePremiumFeatures')
+  @Throttle({ default: { limit: 5, ttl: 300000 } }) // 5 premium feature accesses per 5 minutes
   testPremiumFeatures(@Req() req: any) {
     return {
       message: 'Premium features access working!',
@@ -130,6 +134,7 @@ export class AuthController {
   }
 
   @Post('forgot-password')
+  @Throttle({ default: { limit: 2, ttl: 300000 } }) // 2 attempts per 5 minutes
   async requestPasswordReset(@Body() forgotPasswordDto: ForgotPasswordDto) {
     try {
       console.log('Password reset requested for:', forgotPasswordDto.email);
@@ -143,6 +148,7 @@ export class AuthController {
   }
 
   @Post('reset-password')
+  @Throttle({ default: { limit: 3, ttl: 300000 } }) // 3 attempts per 5 minutes
   async resetPassword(@Body() resetPasswordDto: ResetPasswordDto) {
     try {
       console.log('Password reset attempt with token');

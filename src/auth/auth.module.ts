@@ -3,18 +3,22 @@ import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { HttpModule } from '@nestjs/axios';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './jwt.strategy';
 import { AdminController } from './admin.controller';
 import { RolesGuard } from './guards/roles.guard';
 import { SocialAuthService } from './social-auth.service';
+import { AccountLockoutService } from './account-lockout.service';
+import { LockoutCleanupService } from './lockout-cleanup.service';
 import { SupabaseModule } from '../supabase/supabase.module';
 
 @Module({
   imports: [
     SupabaseModule,
     HttpModule,
+    ScheduleModule.forRoot(),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
@@ -39,12 +43,15 @@ import { SupabaseModule } from '../supabase/supabase.module';
     JwtStrategy,
     RolesGuard,
     SocialAuthService,
+    AccountLockoutService,
+    LockoutCleanupService,
   ],
   exports: [
     AuthService,
     JwtStrategy,
     RolesGuard,
     SocialAuthService,
+    AccountLockoutService,
     PassportModule,
   ],
 })
