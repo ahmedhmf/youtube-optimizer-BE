@@ -16,13 +16,17 @@ import { YoutubeService } from '../youtube/youtube.service';
 import { AiService } from '../ai/ai.service';
 import { AuditRepository } from './audit.repository';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { RequirePermissions } from '../auth/decorators/permissions.decorator';
+import { UserRole } from '../auth/types/roles.types';
 import { AiMessageConfiguration } from 'src/model/ai-configuration.model';
 import { SupabaseService } from '../supabase/supabase.service';
 import { SupabaseStorageService } from 'src/supabase/supabase-storage.service';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { PaginationQueryDto } from 'src/DTO/pagination-query.dto';
-import { DatabaseQueueService } from './database-queue.service'; // Add this import
+import { DatabaseQueueService } from './database-queue.service';
 import { PaginatedResponse } from 'src/model/paginated-responce.model';
 
 const ALLOWED = [
@@ -46,7 +50,8 @@ export class AuditController {
   ) {}
 
   @Post('video')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.USER, UserRole.PREMIUM, UserRole.MODERATOR, UserRole.ADMIN)
   async analyzeVideo(
     @Body() body: { configuration: AiMessageConfiguration },
     @Req() req,
@@ -205,7 +210,7 @@ export class AuditController {
   }
 
   @Get('jobs')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   async getUserJobs(@Req() req) {
     try {
       return await this.queueService.getUserJobs(req.user.id);
@@ -316,7 +321,8 @@ export class AuditController {
   }
 
   @Delete('delete/:id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @RequirePermissions('canDeleteAnyContent')
   async deleteAudit(@Param('id') auditId: string, @Req() req) {
     const userId = req.user.id;
 

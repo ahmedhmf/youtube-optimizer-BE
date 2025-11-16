@@ -5,6 +5,8 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './jwt.strategy';
+import { AdminController } from './admin.controller';
+import { RolesGuard } from './guards/roles.guard';
 import { SupabaseModule } from '../supabase/supabase.module';
 
 @Module({
@@ -24,8 +26,8 @@ import { SupabaseModule } from '../supabase/supabase.module';
       inject: [ConfigService],
     }),
   ],
-  controllers: [AuthController],
-  providers: [AuthService, JwtStrategy],
-  exports: [AuthService, JwtStrategy, PassportModule],
+  controllers: [AuthController, AdminController],
+  providers: [AuthService, JwtStrategy, RolesGuard],
+  exports: [AuthService, JwtStrategy, RolesGuard, PassportModule],
 })
 export class AuthModule {}

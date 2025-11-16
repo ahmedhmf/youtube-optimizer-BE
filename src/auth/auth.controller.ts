@@ -8,6 +8,10 @@ import {
   Req,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
+import { RolesGuard } from './guards/roles.guard';
+import { Roles } from './decorators/roles.decorator';
+import { RequirePermissions } from './decorators/permissions.decorator';
+import { UserRole } from './types/roles.types';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import {
   LoginDto,
@@ -62,6 +66,28 @@ export class AuthController {
   testAuth(@Req() req: any) {
     return {
       message: 'JWT Auth working!',
+      user: req.user,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  @Get('test/admin')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  testAdminOnly(@Req() req: any) {
+    return {
+      message: 'Admin access working!',
+      user: req.user,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  @Get('test/premium')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @RequirePermissions('canUsePremiumFeatures')
+  testPremiumFeatures(@Req() req: any) {
+    return {
+      message: 'Premium features access working!',
       user: req.user,
       timestamp: new Date().toISOString(),
     };

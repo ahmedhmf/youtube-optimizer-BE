@@ -10,6 +10,7 @@ import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
 import { LoginDto, RegisterDto } from './dto';
 import { User, AuthResponse } from './interfaces/user.interface';
+import { UserRole } from './types/roles.types';
 
 @Injectable()
 export class AuthService {
@@ -56,6 +57,7 @@ export class AuthService {
         email,
         name: name || email.split('@')[0],
         password_hash: hashedPassword,
+        role: UserRole.USER, // Default role for new users
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
@@ -75,6 +77,7 @@ export class AuthService {
       id: profile.id,
       email: profile.email,
       name: profile.name,
+      role: profile.role || UserRole.USER,
       createdAt: new Date(profile.created_at),
       updatedAt: new Date(profile.updated_at),
     };
@@ -118,6 +121,7 @@ export class AuthService {
       id: profile.id,
       email: profile.email,
       name: profile.name,
+      role: profile.role || UserRole.USER,
       createdAt: new Date(profile.created_at),
       updatedAt: new Date(profile.updated_at),
     };
@@ -222,6 +226,7 @@ export class AuthService {
       id: profile.id,
       email: profile.email,
       name: profile.name,
+      role: profile.role || UserRole.USER,
       createdAt: new Date(profile.created_at),
       updatedAt: new Date(profile.updated_at),
     };
@@ -256,6 +261,7 @@ export class AuthService {
       id: profile.id,
       email: profile.email,
       name: profile.name,
+      role: profile.role || UserRole.USER,
       createdAt: new Date(profile.created_at),
       updatedAt: new Date(profile.updated_at),
     };
@@ -276,7 +282,14 @@ export class AuthService {
   private async generateTokens(userId: string) {
     console.log('AuthService - generateTokens for user:', userId);
     console.log('AuthService - JWT_SECRET available:', !!process.env.JWT_SECRET);
-    const accessToken = this.jwtService.sign({ sub: userId });
+    
+    // Get user profile to include role in token
+    const user = await this.getProfile(userId);
+    const accessToken = this.jwtService.sign({ 
+      sub: userId, 
+      role: user.role 
+    });
+    
     console.log('AuthService - Generated token:', accessToken.substring(0, 50) + '...');
     const refreshToken = await this.generateRefreshToken();
 
