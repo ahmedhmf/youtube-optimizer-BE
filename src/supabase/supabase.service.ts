@@ -16,6 +16,14 @@ export class SupabaseService {
     return this.supabase;
   }
 
+  // Service role client for admin operations (bypasses RLS)
+  getServiceClient(): SupabaseClient {
+    return createClient(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_KEY!, // This bypasses RLS
+    );
+  }
+
   // Create authenticated client with proper session
   getAuthenticatedClient(accessToken: string): SupabaseClient {
     const authenticatedClient = createClient(

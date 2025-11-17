@@ -14,6 +14,7 @@ import { UserRole } from './types/roles.types';
 import { SocialAuthService } from './social-auth.service';
 import { SocialProvider, SocialUserInfo } from './dto/social-login.dto';
 import { AccountLockoutService } from './account-lockout.service';
+import { SessionSecurityService } from './session-security.service';
 
 @Injectable()
 export class AuthService {
@@ -22,6 +23,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly socialAuthService: SocialAuthService,
     private readonly accountLockoutService: AccountLockoutService,
+    private readonly sessionSecurityService: SessionSecurityService,
   ) {}
 
   async register(registerDto: RegisterDto): Promise<AuthResponse> {
@@ -178,13 +180,46 @@ export class AuthService {
     };
   }
 
+  /**
+   * Enhanced login with session security (when request/response objects are available)
+   */
+  async loginWithSession(
+    loginDto: LoginDto,
+    request: any,
+    response: any,
+  ): Promise<AuthResponse> {
+    // First do the standard login to get/validate user
+    const standardResult = await this.login(loginDto);
+    
+    // Now create secure session instead of returning JWT tokens
+    const sessionData = await this.sessionSecurityService.createSecureSession(
+      standardResult.user.id,
+      standardResult.user.email,
+      standardResult.user.role,
+      request,
+      response,
+    );
+
+    // Return access token only (refresh token is in HTTP-only cookie)
+    return {
+      accessToken: sessionData.accessToken,
+      refreshToken: '', // Empty since it's in HTTP-only cookie
+      user: standardResult.user,
+    };
+  }
+
   async logout(userId: string): Promise<{ success: boolean }> {
-    const client = this.supabase.getClient();
-
-    // Invalidate all refresh tokens for user
-    await client.from('refresh_tokens').delete().eq('user_id', userId);
-
-    return { success: true };
+    try {
+      // Use session security service for proper cleanup
+      await this.sessionSecurityService.logout(userId);
+      return { success: true };
+    } catch (error) {
+      console.error('Logout error:', error);
+      // Fallback to old method if session security fails
+      const client = this.supabase.getClient();
+      await client.from('refresh_tokens').delete().eq('user_id', userId);
+      return { success: true };
+    }
   }
 
   async refresh(
@@ -482,15 +517,45 @@ export class AuthService {
       };
     }
 
-    // Generate JWT tokens
+    // TODO: Create secure session - requires request/response objects
+    // For now, generate tokens the old way but mark for enhancement
     const tokens = await this.generateTokens(user.id);
-
-    // Store refresh token
     await this.storeRefreshToken(user.id, tokens.refreshToken);
+
+    // TODO: Log social login success event in security_events table
+    console.log(`Social login successful for user ${user.id} via ${socialUserInfo.provider}`);
 
     return {
       ...tokens,
       user,
+    };
+  }
+
+  /**
+   * Enhanced social login with session security (when request/response objects are available)
+   */
+  async socialLoginWithSession(
+    socialLoginDto: SocialLoginDto,
+    request: any,
+    response: any,
+  ): Promise<AuthResponse> {
+    // First do the standard social login to get/create user
+    const standardResult = await this.socialLogin(socialLoginDto);
+    
+    // Now create secure session instead of returning JWT tokens
+    const sessionData = await this.sessionSecurityService.createSecureSession(
+      standardResult.user.id,
+      standardResult.user.email,
+      standardResult.user.role,
+      request,
+      response,
+    );
+
+    // Return access token only (refresh token is in HTTP-only cookie)
+    return {
+      accessToken: sessionData.accessToken,
+      refreshToken: '', // Empty since it's in HTTP-only cookie
+      user: standardResult.user,
     };
   }
 

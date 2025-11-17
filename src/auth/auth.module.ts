@@ -12,6 +12,7 @@ import { RolesGuard } from './guards/roles.guard';
 import { SocialAuthService } from './social-auth.service';
 import { AccountLockoutService } from './account-lockout.service';
 import { LockoutCleanupService } from './lockout-cleanup.service';
+import { SessionSecurityService } from './session-security.service';
 import { SupabaseModule } from '../supabase/supabase.module';
 
 @Module({
@@ -45,6 +46,7 @@ import { SupabaseModule } from '../supabase/supabase.module';
     SocialAuthService,
     AccountLockoutService,
     LockoutCleanupService,
+    SessionSecurityService,
   ],
   exports: [
     AuthService,

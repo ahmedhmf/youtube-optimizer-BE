@@ -3,6 +3,8 @@ import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 import * as dotenv from 'dotenv';
 import * as bodyParser from 'body-parser';
+import cookieParser from 'cookie-parser';
+import session from 'express-session';
 import helmet from 'helmet';
 import { EnvironmentService } from './common/environment.service';
 
@@ -13,7 +15,27 @@ async function bootstrap() {
 
   // Get environment service from the application context
   const environmentService = app.get(EnvironmentService);
-  
+
+  // Cookie parser for session management
+  app.use(cookieParser());
+
+  // Session configuration with security settings
+  const isProduction = environmentService.isProduction();
+  app.use(
+    session({
+      secret: environmentService.getSessionSecret(),
+      resave: false,
+      saveUninitialized: false,
+      cookie: {
+        secure: isProduction, // HTTPS only in production
+        httpOnly: true, // Prevent XSS
+        maxAge: 24 * 60 * 60 * 1000, // 24 hours
+        sameSite: isProduction ? 'strict' : 'lax', // CSRF protection
+      },
+      name: 'sessionId', // Don't use default 'connect.sid'
+    }),
+  );
+
   // Security headers with Helmet
   app.use(helmet(environmentService.getSecurityHeadersConfig()));
 
