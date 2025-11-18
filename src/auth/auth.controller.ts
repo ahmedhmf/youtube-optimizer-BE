@@ -19,6 +19,7 @@ import { Roles } from './decorators/roles.decorator';
 import { RequirePermissions } from './decorators/permissions.decorator';
 import { UserRole } from './types/roles.types';
 import { JwtAuthGuard } from './jwt-auth.guard';
+import { CSRFGuard } from './guards/csrf.guard';
 import {
   LoginDto,
   RegisterDto,
@@ -39,12 +40,14 @@ export class AuthController {
   ) {}
 
   @Post('register')
+  @UseGuards(CSRFGuard)
   @Throttle({ default: { limit: 3, ttl: 300000 } }) // 3 attempts per 5 minutes
   async register(@Body() registerDto: RegisterDto) {
     return this.authService.register(registerDto);
   }
 
   @Post('login')
+  @UseGuards(CSRFGuard)
   @Throttle({ default: { limit: 5, ttl: 60000 } }) // 5 attempts per minute
   async login(@Body() loginDto: LoginDto, @Req() req, @Res() res) {
     try {
@@ -54,16 +57,22 @@ export class AuthController {
         req,
         res,
       );
-      
-      console.log('Login successful with session security for user:', result.user.email);
+
+      console.log(
+        'Login successful with session security for user:',
+        result.user.email,
+      );
       return res.json(result);
     } catch (sessionError) {
-      console.warn('Session security login failed, falling back to standard login:', sessionError);
-      
+      console.warn(
+        'Session security login failed, falling back to standard login:',
+        sessionError,
+      );
+
       try {
         // Fallback to regular login if session creation fails
         const result = await this.authService.login(loginDto);
-        
+
         console.log('Login successful (fallback) for user:', result.user.email);
         return res.json(result);
       } catch (error) {
@@ -99,7 +108,7 @@ export class AuthController {
   }
 
   @Put('profile')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CSRFGuard)
   async updateProfile(
     @Req() req,
     @Body() updateProfileDto: UpdateProfileDto,
@@ -141,7 +150,11 @@ export class AuthController {
   }
 
   @Post('social/google')
-  async googleLogin(@Body() body: SocialLoginRequestDto, @Req() req, @Res() res) {
+  async googleLogin(
+    @Body() body: SocialLoginRequestDto,
+    @Req() req,
+    @Res() res,
+  ) {
     try {
       console.log('Google login request body:', body);
 
@@ -159,11 +172,17 @@ export class AuthController {
         res,
       );
 
-      console.log('Google login successful with session security for user:', result.user.email);
+      console.log(
+        'Google login successful with session security for user:',
+        result.user.email,
+      );
       return res.json(result);
     } catch (sessionError) {
-      console.warn('Session security login failed, falling back to standard login:', sessionError);
-      
+      console.warn(
+        'Session security login failed, falling back to standard login:',
+        sessionError,
+      );
+
       try {
         // Fallback to regular login if session creation fails
         const result = await this.authService.socialLogin({
@@ -171,7 +190,10 @@ export class AuthController {
           provider: SocialProvider.GOOGLE,
         });
 
-        console.log('Google login successful (fallback) for user:', result.user.email);
+        console.log(
+          'Google login successful (fallback) for user:',
+          result.user.email,
+        );
         return res.json(result);
       } catch (error) {
         console.error('Google login error:', error);
@@ -190,6 +212,7 @@ export class AuthController {
   }
 
   @Post('forgot-password')
+  @UseGuards(CSRFGuard)
   @Throttle({ default: { limit: 2, ttl: 300000 } }) // 2 attempts per 5 minutes
   async requestPasswordReset(@Body() forgotPasswordDto: ForgotPasswordDto) {
     try {
@@ -204,6 +227,7 @@ export class AuthController {
   }
 
   @Post('reset-password')
+  @UseGuards(CSRFGuard)
   @Throttle({ default: { limit: 3, ttl: 300000 } }) // 3 attempts per 5 minutes
   async resetPassword(@Body() resetPasswordDto: ResetPasswordDto) {
     try {
@@ -220,6 +244,7 @@ export class AuthController {
   // Session Management Endpoints
 
   @Post('refresh')
+  @UseGuards(CSRFGuard)
   @Throttle({ default: { limit: 10, ttl: 60000 } }) // 10 attempts per minute
   async refreshToken(@Req() req, @Res() res) {
     try {
@@ -231,7 +256,7 @@ export class AuthController {
   }
 
   @Get('sessions')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CSRFGuard)
   async getUserSessions(@Req() req) {
     const sessions = await this.sessionSecurityService.getUserSessions(
       req.user.id,
@@ -252,7 +277,7 @@ export class AuthController {
   }
 
   @Delete('sessions/:sessionId')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, CSRFGuard)
   async revokeSession(
     @Param('sessionId') sessionId: string,
     @Req() req,

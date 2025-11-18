@@ -133,6 +133,7 @@ export class EnvironmentService {
         'Accept',
         'Origin',
         'X-API-Key',
+        'X-CSRF-Token',
       ],
       exposedHeaders: ['X-Total-Count', 'X-Rate-Limit-Remaining'],
       maxAge: isProduction ? 86400 : 300,

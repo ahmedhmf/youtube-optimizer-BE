@@ -7,6 +7,7 @@ import cookieParser from 'cookie-parser';
 import session from 'express-session';
 import helmet from 'helmet';
 import { EnvironmentService } from './common/environment.service';
+import { CSRFService } from './common/csrf.service';
 
 dotenv.config();
 
@@ -36,11 +37,15 @@ async function bootstrap() {
     }),
   );
 
+  // Enable CORS with environment-aware configuration (BEFORE other middleware)
+  app.enableCors(environmentService.getCorsConfig());
+
   // Security headers with Helmet
   app.use(helmet(environmentService.getSecurityHeadersConfig()));
 
-  // Enable CORS with environment-aware configuration
-  app.enableCors(environmentService.getCorsConfig());
+  // CSRF Protection Service (AFTER CORS)
+  const csrfService = app.get(CSRFService);
+  app.use(csrfService.middleware());
 
   // Enable validation pipes
   app.useGlobalPipes(

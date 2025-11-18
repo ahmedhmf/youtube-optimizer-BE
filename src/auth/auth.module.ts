@@ -14,6 +14,9 @@ import { AccountLockoutService } from './account-lockout.service';
 import { LockoutCleanupService } from './lockout-cleanup.service';
 import { SessionSecurityService } from './session-security.service';
 import { SupabaseModule } from '../supabase/supabase.module';
+import { CSRFService } from '../common/csrf.service';
+import { CSRFGuard } from './guards/csrf.guard';
+import { CSRFController } from './csrf.controller';
 
 @Module({
   imports: [
@@ -38,7 +41,7 @@ import { SupabaseModule } from '../supabase/supabase.module';
       inject: [ConfigService],
     }),
   ],
-  controllers: [AuthController, AdminController],
+  controllers: [AuthController, AdminController, CSRFController],
   providers: [
     AuthService,
     JwtStrategy,
@@ -47,6 +50,8 @@ import { SupabaseModule } from '../supabase/supabase.module';
     AccountLockoutService,
     LockoutCleanupService,
     SessionSecurityService,
+    CSRFService,
+    CSRFGuard,
   ],
   exports: [
     AuthService,
