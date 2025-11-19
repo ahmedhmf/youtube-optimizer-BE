@@ -57,24 +57,24 @@ export class TokenBlacklistService implements OnModuleInit {
     userId: string,
     reason: BlacklistReason = BlacklistReason.LOGOUT,
   ): Promise<void> {
-    console.log('TokenBlacklistService.blacklistToken called:', { 
-      userId, 
-      reason, 
-      tokenLength: token.length 
+    console.log('TokenBlacklistService.blacklistToken called:', {
+      userId,
+      reason,
+      tokenLength: token.length,
     });
-    
+
     try {
       // Extract expiration from token
       const decoded = this.jwtService.decode(token);
-      console.log('Token decoded:', { 
-        hasDecoded: !!decoded, 
-        type: typeof decoded 
+      console.log('Token decoded:', {
+        hasDecoded: !!decoded,
+        type: typeof decoded,
       });
-      
+
       if (!decoded || typeof decoded !== 'object' || !decoded.exp) {
         throw new Error('Invalid token: missing expiration');
       }
-      
+
       const expiresAt = new Date(decoded.exp * 1000);
       console.log('Token expiration:', expiresAt.toISOString());
 
@@ -82,10 +82,8 @@ export class TokenBlacklistService implements OnModuleInit {
       const tokenHash = this.hashToken(token);
       console.log('Token hash created, length:', tokenHash.length);
 
-      // Store in database
-      console.log('Attempting to insert into blacklisted_tokens table...');
       const { error } = await this.supabaseService
-        .getClient()
+        .getServiceClient()
         .from('blacklisted_tokens')
         .insert({
           token_hash: tokenHash,
@@ -105,7 +103,9 @@ export class TokenBlacklistService implements OnModuleInit {
       this.tokenCache.set(tokenHash, true);
       this.cacheExpiry.set(tokenHash, expiresAt.getTime());
 
-      console.log(`Token blacklisted successfully for user ${userId}, reason: ${reason}`);
+      console.log(
+        `Token blacklisted successfully for user ${userId}, reason: ${reason}`,
+      );
     } catch (error) {
       console.error('Error in blacklistToken:', error);
       throw error;
@@ -125,7 +125,7 @@ export class TokenBlacklistService implements OnModuleInit {
 
       // Update user's token version to invalidate all existing tokens
       const { error } = await this.supabaseService
-        .getClient()
+        .getServiceClient()
         .from('user_profiles')
         .update({
           token_version: tokenVersion + 1,
@@ -171,7 +171,7 @@ export class TokenBlacklistService implements OnModuleInit {
 
       // Check database if not in cache
       const { data, error } = await this.supabaseService
-        .getClient()
+        .getServiceClient()
         .from('blacklisted_tokens')
         .select('expires_at')
         .eq('token_hash', tokenHash)
@@ -208,7 +208,7 @@ export class TokenBlacklistService implements OnModuleInit {
   ): Promise<boolean> {
     try {
       const { data, error } = await this.supabaseService
-        .getClient()
+        .getServiceClient()
         .from('user_profiles')
         .select('token_version, updated_at')
         .eq('id', userId)
@@ -233,7 +233,7 @@ export class TokenBlacklistService implements OnModuleInit {
   async getUserBlacklistedTokens(userId: string): Promise<BlacklistedToken[]> {
     try {
       const { data, error } = await this.supabaseService
-        .getClient()
+        .getServiceClient()
         .from('blacklisted_tokens')
         .select('*')
         .eq('user_id', userId)
@@ -258,7 +258,7 @@ export class TokenBlacklistService implements OnModuleInit {
   async cleanupExpiredTokens(): Promise<void> {
     try {
       const { error } = await this.supabaseService
-        .getClient()
+        .getServiceClient()
         .from('blacklisted_tokens')
         .delete()
         .lt('expires_at', new Date().toISOString());
@@ -286,7 +286,7 @@ export class TokenBlacklistService implements OnModuleInit {
   }> {
     try {
       const { data, error } = await this.supabaseService
-        .getClient()
+        .getServiceClient()
         .from('blacklisted_tokens')
         .select('reason, created_at')
         .gt('expires_at', new Date().toISOString());
@@ -328,7 +328,7 @@ export class TokenBlacklistService implements OnModuleInit {
   private async getUserTokenVersion(userId: string): Promise<number> {
     try {
       const { data, error } = await this.supabaseService
-        .getClient()
+        .getServiceClient()
         .from('user_profiles')
         .select('token_version')
         .eq('id', userId)
@@ -359,7 +359,7 @@ export class TokenBlacklistService implements OnModuleInit {
       const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
 
       const { data, error } = await this.supabaseService
-        .getClient()
+        .getServiceClient()
         .from('blacklisted_tokens')
         .select('token_hash, expires_at')
         .gt('expires_at', new Date().toISOString())

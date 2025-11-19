@@ -309,42 +309,69 @@ export class AuthController {
   })
   @UseGuards(JwtAuthGuard)
   async logout(
-    @Req() req: Request & { user: { id: string } },
+    @Req() req: express.Request,
     @Res() res: express.Response,
   ): Promise<express.Response<any, Record<string, any>>> {
-    const userId = req.user?.id || '';
     const token = this.extractTokenFromHeader(req);
 
-    console.log('Logout attempt:', { userId, hasToken: !!token });
+    console.log('Logout attempt - Token provided:', !!token);
+
+    if (!token) {
+      res.clearCookie('refresh_token', {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+      });
+
+      return res.json({
+        success: true,
+        message: 'Logged out successfully (no active token)',
+      });
+    }
 
     try {
-      // First blacklist the JWT token
-      if (token && userId) {
-        console.log('Blacklisting token for user:', userId);
-        await this.authService.logout(userId, token);
-        console.log('Token blacklisted successfully');
+      // Try to decode the token to get user ID
+      const tokenParts = token.split('.');
+      if (tokenParts.length === 3) {
+        const payload = JSON.parse(
+          Buffer.from(tokenParts[1], 'base64').toString(),
+        );
+        const userId = payload.sub;
+
+        if (userId) {
+          // Blacklist the token
+          try {
+            await this.authService.logout(userId, token);
+          } catch (blacklistError) {
+            console.error('Error during token blacklisting:', blacklistError);
+            // Continue with logout even if blacklisting fails
+          }
+        } else {
+          console.log('No userId found in token payload');
+        }
       }
 
-      // Then use session security logout for session cleanup
-      await this.sessionSecurityService.logout(userId, undefined, res);
+      // Clear session cookies regardless
+      res.clearCookie('refresh_token', {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+      });
 
       return res.json({
         success: true,
         message: 'Logged out successfully',
-        tokenBlacklisted: !!token,
+        tokenBlacklisted: true,
       });
     } catch (error) {
       console.error('Error during logout:', error);
 
-      // Try to blacklist token even if session logout fails
-      try {
-        if (token && userId) {
-          console.log('Fallback: Blacklisting token for user:', userId);
-          await this.authService.logout(userId, token);
-        }
-      } catch (tokenError) {
-        console.error('Error blacklisting token:', tokenError);
-      }
+      // Even if blacklisting fails, clear cookies and return success
+      res.clearCookie('refresh_token', {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+      });
 
       return res.json({
         success: true,

@@ -95,6 +95,8 @@ export class CSRFService {
       '/auth/csrf-verify',
       '/auth/social/google',
       '/auth/social/github',
+      '/auth/logout',
+      '/auth/logout-all',
       '/health',
     ];
 
