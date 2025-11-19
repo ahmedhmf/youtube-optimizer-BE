@@ -6,9 +6,11 @@ import * as bodyParser from 'body-parser';
 import cookieParser from 'cookie-parser';
 import session from 'express-session';
 import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import { Request, Response, NextFunction } from 'express';
 import { EnvironmentService } from './common/environment.service';
 import { CSRFService } from './common/csrf.service';
+import { ValidationAndSanitizationPipe } from './common/validation-sanitization.pipe';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 
 dotenv.config();
@@ -45,16 +47,52 @@ async function bootstrap() {
   // Security headers with Helmet
   app.use(helmet(environmentService.getSecurityHeadersConfig()));
 
-  // CSRF Protection Service (AFTER CORS)
+  // Rate limiting
+  app.use(
+    rateLimit({
+      windowMs: 15 * 60 * 1000, // 15 minutes
+      max: 1000, // limit each IP to 1000 requests per windowMs
+      message: {
+        error: 'Too many requests from this IP',
+        retryAfter: '15 minutes',
+      },
+      standardHeaders: true,
+      legacyHeaders: false,
+    }),
+  );
+
+  // Specific rate limiting for auth endpoints
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 10, // limit each IP to 10 auth requests per windowMs
+    message: {
+      error: 'Too many authentication attempts',
+      retryAfter: '15 minutes',
+    },
+    skip: (req) => {
+      const authPaths = ['/auth/login', '/auth/register', '/auth/forgot-password'];
+      return !authPaths.some((path) => req.path.startsWith(path));
+    },
+  });
+
+  app.use('/auth', authLimiter);
+
+  // CSRF Protection Service (AFTER CORS and rate limiting)
   const csrfService = app.get(CSRFService);
   app.use(csrfService.middleware());
 
-  // Enable validation pipes
+  // Enhanced validation pipes with sanitization
   app.useGlobalPipes(
+    new ValidationAndSanitizationPipe(),
     new ValidationPipe({
       whitelist: true,
       forbidNonWhitelisted: true,
       transform: true,
+      disableErrorMessages: isProduction, // Don't expose validation details in production
+      validationError: {
+        target: false,
+        value: false,
+      },
     }),
   );
 
