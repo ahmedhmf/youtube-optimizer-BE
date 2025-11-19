@@ -17,6 +17,8 @@ import { SupabaseModule } from '../supabase/supabase.module';
 import { CSRFService } from '../common/csrf.service';
 import { CSRFGuard } from './guards/csrf.guard';
 import { CSRFController } from './csrf.controller';
+import { TokenBlacklistService } from './token-blacklist.service';
+import { TokenTestController } from './token-test.controller';
 
 @Module({
   imports: [
@@ -37,7 +39,7 @@ import { CSRFController } from './csrf.controller';
       inject: [ConfigService],
     }),
   ],
-  controllers: [AuthController, AdminController, CSRFController],
+  controllers: [AuthController, AdminController, CSRFController, TokenTestController],
   providers: [
     AuthService,
     JwtStrategy,
@@ -46,6 +48,7 @@ import { CSRFController } from './csrf.controller';
     AccountLockoutService,
     LockoutCleanupService,
     SessionSecurityService,
+    TokenBlacklistService,
     CSRFService,
     CSRFGuard,
   ],
@@ -55,6 +58,7 @@ import { CSRFController } from './csrf.controller';
     RolesGuard,
     SocialAuthService,
     AccountLockoutService,
+    TokenBlacklistService,
     PassportModule,
   ],
 })

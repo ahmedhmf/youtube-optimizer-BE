@@ -18,6 +18,10 @@ import { UserRole } from '../auth/types/roles.types';
 import { AuthService } from '../auth/auth.service';
 import { AccountLockoutService } from './account-lockout.service';
 import { LockoutCleanupService } from './lockout-cleanup.service';
+import {
+  TokenBlacklistService,
+  BlacklistReason,
+} from './token-blacklist.service';
 import { PaginationQueryDto } from '../DTO/pagination-query.dto';
 
 @Controller('admin')
@@ -28,6 +32,7 @@ export class AdminController {
     private readonly authService: AuthService,
     private readonly accountLockoutService: AccountLockoutService,
     private readonly lockoutCleanupService: LockoutCleanupService,
+    private readonly tokenBlacklistService: TokenBlacklistService,
   ) {}
 
   @Get('users')
@@ -121,6 +126,81 @@ export class AdminController {
         lockoutDurationMinutes: 'How long account stays locked',
         resetWindowMinutes: 'Time window for attempt counting',
       },
+    };
+  }
+
+  @Get('tokens/blacklist/stats')
+  @RequirePermissions('canAccessAdminPanel')
+  async getBlacklistStats() {
+    const stats = await this.tokenBlacklistService.getBlacklistStats();
+    return {
+      ...stats,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  @Get('tokens/blacklist/:userId')
+  @RequirePermissions('canAccessAdminPanel')
+  async getUserBlacklistedTokens(@Param('userId') userId: string) {
+    const tokens =
+      await this.tokenBlacklistService.getUserBlacklistedTokens(userId);
+    return {
+      userId,
+      blacklistedTokens: tokens,
+      count: tokens.length,
+    };
+  }
+
+  @Post('tokens/blacklist/:userId/all')
+  @RequirePermissions('canAccessAdminPanel')
+  @Throttle({ short: { ttl: 30000, limit: 5 } }) // 5 times per 30 seconds
+  async blacklistAllUserTokens(
+    @Param('userId') userId: string,
+    @Body('reason') reason?: string,
+  ) {
+    const blacklistReason =
+      reason === 'security_breach'
+        ? BlacklistReason.SECURITY_BREACH
+        : BlacklistReason.ADMIN_REVOKE;
+
+    await this.tokenBlacklistService.blacklistAllUserTokens(
+      userId,
+      blacklistReason,
+    );
+
+    return {
+      message: 'All tokens blacklisted for user',
+      userId,
+      reason: blacklistReason,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  @Post('tokens/cleanup')
+  @RequirePermissions('canAccessAdminPanel')
+  @Throttle({ short: { ttl: 60000, limit: 1 } }) // Once per minute
+  async cleanupExpiredTokens() {
+    await this.tokenBlacklistService.cleanupExpiredTokens();
+    return {
+      message: 'Expired tokens cleanup completed',
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  @Post('users/:userId/disable')
+  @RequirePermissions('canAccessAdminPanel')
+  @Throttle({ short: { ttl: 30000, limit: 3 } }) // 3 times per 30 seconds
+  async disableUserAccount(@Param('userId') userId: string) {
+    // Blacklist all tokens for account disabled
+    await this.tokenBlacklistService.blacklistAllUserTokens(
+      userId,
+      BlacklistReason.ACCOUNT_DISABLED,
+    );
+
+    return {
+      message: 'User account disabled and all tokens revoked',
+      userId,
+      timestamp: new Date().toISOString(),
     };
   }
 }

@@ -312,18 +312,45 @@ export class AuthController {
     @Req() req: Request & { user: { id: string } },
     @Res() res: express.Response,
   ): Promise<express.Response<any, Record<string, any>>> {
+    const userId = req.user?.id || '';
+    const token = this.extractTokenFromHeader(req);
+
+    console.log('Logout attempt:', { userId, hasToken: !!token });
+
     try {
-      // Use session security logout which cleans up sessions AND refresh tokens
-      await this.sessionSecurityService.logout(
-        req.user?.id || '',
-        undefined,
-        res,
-      );
-      return res.json({ success: true, message: 'Logged out successfully' });
-    } catch {
-      // Fallback to regular logout if session security fails
-      const result = await this.authService.logout(req.user?.id || '');
-      return res.json(result);
+      // First blacklist the JWT token
+      if (token && userId) {
+        console.log('Blacklisting token for user:', userId);
+        await this.authService.logout(userId, token);
+        console.log('Token blacklisted successfully');
+      }
+
+      // Then use session security logout for session cleanup
+      await this.sessionSecurityService.logout(userId, undefined, res);
+
+      return res.json({
+        success: true,
+        message: 'Logged out successfully',
+        tokenBlacklisted: !!token,
+      });
+    } catch (error) {
+      console.error('Error during logout:', error);
+
+      // Try to blacklist token even if session logout fails
+      try {
+        if (token && userId) {
+          console.log('Fallback: Blacklisting token for user:', userId);
+          await this.authService.logout(userId, token);
+        }
+      } catch (tokenError) {
+        console.error('Error blacklisting token:', tokenError);
+      }
+
+      return res.json({
+        success: true,
+        message: 'Logged out with partial cleanup',
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -1017,5 +1044,33 @@ export class AuthController {
     // TODO: Verify session belongs to user
     await this.sessionSecurityService.revokeSession(sessionId, res);
     return res.json({ message: 'Session revoked successfully' });
+  }
+
+  /**
+   * Extract JWT token from Authorization header
+   */
+  private extractTokenFromHeader(request: any): string | undefined {
+    try {
+      const authHeader = request.headers?.authorization;
+      if (!authHeader) {
+        console.log('No authorization header found');
+        return undefined;
+      }
+
+      const [type, token] = authHeader.split(' ');
+      if (type !== 'Bearer' || !token) {
+        console.log('Invalid authorization header format:', {
+          type,
+          hasToken: !!token,
+        });
+        return undefined;
+      }
+
+      console.log('Token extracted successfully, length:', token.length);
+      return token;
+    } catch (error) {
+      console.error('Error extracting token:', error);
+      return undefined;
+    }
   }
 }

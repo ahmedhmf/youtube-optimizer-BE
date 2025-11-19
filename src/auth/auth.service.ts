@@ -21,6 +21,7 @@ import { SocialAuthService } from './social-auth.service';
 import { SocialProvider, SocialUserInfo } from './dto/social-login.dto';
 import { AccountLockoutService } from './account-lockout.service';
 import { SessionSecurityService } from './session-security.service';
+import { TokenBlacklistService, BlacklistReason } from './token-blacklist.service';
 import { User } from './types/user.interface';
 import { Profile } from './types/profiles.type';
 import { AuthResponse } from './types/auth-response.type';
@@ -35,6 +36,7 @@ export class AuthService {
     private readonly socialAuthService: SocialAuthService,
     private readonly accountLockoutService: AccountLockoutService,
     private readonly sessionSecurityService: SessionSecurityService,
+    private readonly tokenBlacklistService: TokenBlacklistService,
   ) {}
 
   async register(registerDto: RegisterDto): Promise<AuthResponse> {
@@ -217,12 +219,48 @@ export class AuthService {
     };
   }
 
-  async logout(userId: string): Promise<{ success: boolean }> {
+  async logout(userId: string, token?: string): Promise<{ success: boolean }> {
+    console.log('AuthService.logout called:', { userId, hasToken: !!token });
+    
     try {
+      // Blacklist the current token if provided
+      if (token) {
+        console.log('Attempting to blacklist token for user:', userId);
+        await this.tokenBlacklistService.blacklistToken(
+          token,
+          userId,
+          BlacklistReason.LOGOUT,
+        );
+        console.log('Token successfully blacklisted');
+      } else {
+        console.log('No token provided for blacklisting');
+      }
+
       // Use session security service for proper cleanup
+      console.log('Cleaning up sessions for user:', userId);
       await this.sessionSecurityService.logout(userId);
+      console.log('Sessions cleaned up successfully');
+      
       return { success: true };
-    } catch {
+    } catch (error) {
+      console.error('Error during logout:', error);
+      
+      // Try to blacklist token even if other operations fail
+      if (token && !error.message?.includes('blacklist')) {
+        try {
+          console.log('Fallback: Attempting to blacklist token');
+          await this.tokenBlacklistService.blacklistToken(
+            token,
+            userId,
+            BlacklistReason.LOGOUT,
+          );
+          console.log('Fallback token blacklisting successful');
+        } catch (blacklistError) {
+          console.error('Fallback token blacklisting failed:', blacklistError);
+        }
+      }
+      
+      // Fallback cleanup
       const client = this.supabase.getClient();
       await client.from('refresh_tokens').delete().eq('user_id', userId);
       return { success: true };
@@ -589,7 +627,13 @@ export class AuthService {
         );
       }
 
-      // Optional: Invalidate all existing refresh tokens for this user
+      // Blacklist all existing tokens for this user
+      await this.tokenBlacklistService.blacklistAllUserTokens(
+        user.id,
+        BlacklistReason.PASSWORD_CHANGE,
+      );
+
+      // Also invalidate refresh tokens
       await this.invalidateAllUserTokens(user.id);
 
       return { message: 'Password reset successfully' };
@@ -602,6 +646,33 @@ export class AuthService {
       }
       throw new BadRequestException('Failed to reset password');
     }
+  }
+
+  /**
+   * Blacklist token due to suspicious activity
+   * @param token The token to blacklist
+   * @param userId The user ID
+   */
+  async blacklistTokenForSuspiciousActivity(
+    token: string,
+    userId: string,
+  ): Promise<void> {
+    await this.tokenBlacklistService.blacklistToken(
+      token,
+      userId,
+      BlacklistReason.SUSPICIOUS_ACTIVITY,
+    );
+  }
+
+  /**
+   * Blacklist all user tokens due to security breach
+   * @param userId The user ID
+   */
+  async blacklistAllTokensForSecurityBreach(userId: string): Promise<void> {
+    await this.tokenBlacklistService.blacklistAllUserTokens(
+      userId,
+      BlacklistReason.SECURITY_BREACH,
+    );
   }
 
   /**
