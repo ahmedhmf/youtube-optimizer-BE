@@ -1,11 +1,16 @@
-import { Injectable, CanActivate, ExecutionContext, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  CanActivate,
+  ExecutionContext,
+  BadRequestException,
+} from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { Request } from 'express';
 import { CSRFService } from '../../common/csrf.service';
 
 export const SKIP_CSRF = 'skip-csrf';
 export const SkipCSRF = () =>
   Reflector.createDecorator<boolean>({ key: SKIP_CSRF });
-
 
 @Injectable()
 export class CSRFGuard implements CanActivate {
@@ -24,8 +29,7 @@ export class CSRFGuard implements CanActivate {
     if (skipCSRF) {
       return true;
     }
-
-    const request = context.switchToHttp().getRequest();
+    const request = context.switchToHttp().getRequest<Request>();
 
     // Check if this request needs CSRF protection
     if (!this.csrfService.shouldProtect(request)) {

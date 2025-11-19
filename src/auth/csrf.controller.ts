@@ -2,7 +2,12 @@ import { Controller, Get, Req, Res, SetMetadata } from '@nestjs/common';
 import { CSRFService } from '../common/csrf.service';
 import { SKIP_CSRF } from '../auth/guards/csrf.guard';
 import type { Request, Response } from 'express';
-import { ApiHeader, ApiOperation, ApiQuery, ApiResponse } from '@nestjs/swagger';
+import {
+  ApiHeader,
+  ApiOperation,
+  ApiQuery,
+  ApiResponse,
+} from '@nestjs/swagger';
 
 const SkipCSRF = () => SetMetadata(SKIP_CSRF, true);
 
@@ -104,7 +109,6 @@ export class CSRFController {
   })
   @SkipCSRF()
   getCsrfToken(@Req() req: Request, @Res() res: Response) {
-    console.log('Generating CSRF token for session:', req.sessionID);
     const token = this.csrfService.generateToken(req);
 
     // Set token as cookie for automatic inclusion in requests

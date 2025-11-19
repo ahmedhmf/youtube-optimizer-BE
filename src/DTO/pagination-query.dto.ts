@@ -1,4 +1,11 @@
-import { IsOptional, IsNumber, IsString, IsIn, Min, Max } from 'class-validator';
+import {
+  IsOptional,
+  IsNumber,
+  IsString,
+  IsIn,
+  Min,
+  Max,
+} from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 
 export class PaginationQueryDto {
@@ -17,7 +24,9 @@ export class PaginationQueryDto {
 
   @IsOptional()
   @IsString()
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }: { value: any }): string | undefined =>
+    typeof value === 'string' ? value.trim() : value,
+  )
   search?: string;
 
   @IsOptional()

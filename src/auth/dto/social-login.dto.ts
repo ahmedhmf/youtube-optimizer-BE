@@ -20,7 +20,7 @@ export class SocialLoginRequestDto {
   @IsOptional()
   @IsString()
   token?: string; // Google ID token
-  
+
   @IsOptional()
   @IsString()
   code?: string; // GitHub authorization code

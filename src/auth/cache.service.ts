@@ -37,7 +37,10 @@ export class CacheService implements OnModuleInit {
 
       await this.client.connect();
     } catch (error) {
-      this.logger.error('Failed to connect to Redis:', error.message || error);
+      this.logger.error(
+        'Failed to connect to Redis:',
+        error instanceof Error ? error.message : error,
+      );
       // For development, we'll use in-memory fallback
       this.logger.warn('Using in-memory cache fallback for development');
       this.client = null;

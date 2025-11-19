@@ -1,26 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
-
-export interface AccountLockoutStatus {
-  isLocked: boolean;
-  remainingAttempts: number;
-  lockoutUntil?: Date;
-  totalFailedAttempts: number;
-}
-
-export interface LockoutConfig {
-  maxAttempts: number;
-  lockoutDurationMinutes: number;
-  resetWindowMinutes: number;
-}
-
-interface AccountLockoutRecord {
-  identifier: string;
-  failed_attempts: number;
-  first_failure_at: string;
-  locked_until: string | null;
-  last_failure_at: string;
-}
+import { AccountLockout } from './types/account-lockouts.type';
+import { AccountLockoutStatus } from './types/account-lockout-status.type';
+import { LockoutConfig } from './types/lockout-config.type';
 
 @Injectable()
 export class AccountLockoutService {
@@ -46,14 +28,14 @@ export class AccountLockoutService {
         .from('account_lockouts')
         .select('*')
         .eq('identifier', identifier)
-        .maybeSingle(); // Use maybeSingle() to avoid error when no record exists
+        .maybeSingle<AccountLockout>(); // Use maybeSingle() to avoid error when no record exists
 
       const now = new Date();
       let failedAttempts = 1;
       let firstFailureAt = now;
 
       if (existingRecord) {
-        const record = existingRecord as AccountLockoutRecord;
+        const record = existingRecord;
         const recordTime = new Date(record.first_failure_at);
         const timeSinceFirstFailure = now.getTime() - recordTime.getTime();
         const resetWindowMs = this.config.resetWindowMinutes * 60 * 1000;
@@ -108,13 +90,13 @@ export class AccountLockoutService {
           existingRecord: !!existingRecord,
           failedAttempts,
         });
-        
+
         // Don't throw on lockout errors - just log and continue
         // This prevents login attempts from failing due to lockout tracking issues
         this.logger.warn(
           `Lockout tracking failed for ${identifier}, continuing without lockout protection`,
         );
-        
+
         return {
           isLocked: false,
           remainingAttempts: this.config.maxAttempts,
@@ -158,7 +140,7 @@ export class AccountLockoutService {
         .from('account_lockouts')
         .select('*')
         .eq('identifier', identifier)
-        .maybeSingle(); // Use maybeSingle() to avoid error when no record exists
+        .maybeSingle<AccountLockout>(); // Use maybeSingle() to avoid error when no record exists
 
       if (!record) {
         return {
@@ -168,7 +150,7 @@ export class AccountLockoutService {
         };
       }
 
-      const lockoutRecord = record as AccountLockoutRecord;
+      const lockoutRecord = record;
       const now = new Date();
       const lockedUntil = lockoutRecord.locked_until
         ? new Date(lockoutRecord.locked_until)

@@ -29,10 +29,6 @@ import { CSRFController } from './csrf.controller';
       useFactory: (configService: ConfigService) => {
         const secret =
           configService.get<string>('JWT_SECRET') || 'fallback-secret-key';
-        console.log(
-          'JwtModule - Using secret:',
-          secret.substring(0, 10) + '...',
-        );
         return {
           secret,
           signOptions: { expiresIn: '15m' },

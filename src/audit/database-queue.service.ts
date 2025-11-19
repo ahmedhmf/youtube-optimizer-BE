@@ -5,25 +5,14 @@ import { YoutubeService } from '../youtube/youtube.service';
 import { AiService } from '../ai/ai.service';
 import { AuditRepository } from './audit.repository';
 import { SupabaseStorageService } from '../supabase/supabase-storage.service';
-import { AiMessageConfiguration } from '../model/ai-configuration.model';
+import { AiMessageConfiguration } from '../auth/types/ai-configuration.model';
 import * as fs from 'node:fs/promises';
 import * as path from 'path';
 import * as os from 'os';
-
-export interface VideoAnalysisJob {
-  userId: string;
-  email: string;
-  jobId: string;
-  type: 'youtube' | 'upload' | 'transcript';
-  configuration?: AiMessageConfiguration;
-  fileData?: {
-    buffer: Buffer;
-    originalName: string;
-    mimetype: string;
-  };
-  transcript?: string;
-  accessToken?: string;
-}
+import { VideoAnalysisJob } from './models/video-analysis-job.model';
+import { DBJobResultModel } from './models/db-job-result.model';
+import { AuditResponse } from './models/audit.types';
+import { FilgeDataModel } from './models/file-data.model';
 
 @Injectable()
 export class DatabaseQueueService implements OnModuleInit {
@@ -42,9 +31,12 @@ export class DatabaseQueueService implements OnModuleInit {
   ) {}
 
   onModuleInit() {
-    this.logger.log('Database Queue Service initialized');
-    // Start processing immediately
-    setTimeout(() => this.processJobs(), 1000);
+    setTimeout(() => {
+      this.processJobs().catch((error) => {
+        this.logger.error('Error in initial processJobs:', error);
+        throw error;
+      });
+    }, 1000);
   }
 
   async addVideoAnalysisJob(jobData: VideoAnalysisJob): Promise<string> {
@@ -59,7 +51,15 @@ export class DatabaseQueueService implements OnModuleInit {
         );
         videoTitle = videoData.title ?? 'YouTube Video Analysis';
       } catch (error) {
-        this.logger.warn('Could not fetch video title:', error.message);
+        this.logger.warn(
+          'Could not fetch video:',
+          error instanceof Error
+            ? error.message
+            : 'Invalid YouTube URL or unable to fetch video data',
+        );
+        throw new Error(
+          'Could not fetch video: Invalid YouTube URL or unable to fetch video data',
+        );
       }
     }
 
@@ -95,14 +95,14 @@ export class DatabaseQueueService implements OnModuleInit {
     }
 
     // Convert Buffer to base64 for JSON storage
-    const payload: any = { ...jobData };
+    const payload = { ...jobData };
     payload.video_title = videoTitle;
 
     if (payload.fileData?.buffer) {
       payload.fileData = {
         ...payload.fileData,
-        buffer: payload.fileData.buffer.toString('base64'),
-      } as any;
+        buffer: payload.fileData.buffer,
+      };
     }
 
     const { data, error } = await client
@@ -111,27 +111,30 @@ export class DatabaseQueueService implements OnModuleInit {
         user_id: jobData.userId,
         job_type: jobData.type,
         payload: payload,
-        status: 'pending', // Always start as pending
+        status: 'pending',
       })
       .select()
-      .single();
+      .single<DBJobResultModel>();
 
     if (error) {
       this.logger.error('Failed to queue job:', error);
       throw new Error(`Failed to queue job: ${error.message}`);
     }
 
-    // Calculate queue position for user feedback
-    const queuePosition = pendingCount + 1; // Position in user's personal queue
+    const queuePosition = pendingCount + 1;
     const estimatedWaitTime =
-      Math.ceil(queuePosition / this.MAX_CONCURRENT_JOBS) * 2; // Rough estimate
+      Math.ceil(queuePosition / this.MAX_CONCURRENT_JOBS) * 2;
 
     this.logger.log(
       `Job ${data.id} queued for user ${jobData.userId}. Queue position: ${queuePosition}, estimated wait: ${estimatedWaitTime} minutes`,
     );
 
     // Trigger immediate processing check
-    setTimeout(() => this.processJobs(), 100);
+    setTimeout(() => {
+      this.processJobs().catch((error) => {
+        this.logger.error('Error in delayed processJobs:', error);
+      });
+    }, 100);
 
     return data.id.toString();
   }
@@ -143,7 +146,7 @@ export class DatabaseQueueService implements OnModuleInit {
       .from('job_queue')
       .select('*')
       .eq('id', jobId)
-      .single();
+      .single<DBJobResultModel>();
 
     if (error || !job) {
       return { status: 'not_found' };
@@ -224,7 +227,9 @@ export class DatabaseQueueService implements OnModuleInit {
       )
       .eq('user_id', userId)
       .order('created_at', { ascending: false })
-      .limit(50);
+      .limit(50)
+      .returns<DBJobResultModel[]>();
+    console.log('Get user jobs result:', { jobs, error });
 
     if (error) {
       this.logger.error('Failed to get user jobs:', error);
@@ -260,7 +265,8 @@ export class DatabaseQueueService implements OnModuleInit {
         .select('*')
         .eq('status', 'pending')
         .order('created_at', { ascending: true })
-        .limit(50); // Get more jobs to filter through
+        .limit(50)
+        .returns<DBJobResultModel[]>(); // Get more jobs to filter through
 
       if (error) {
         this.logger.error('Failed to fetch pending jobs:', error);
@@ -272,8 +278,9 @@ export class DatabaseQueueService implements OnModuleInit {
       }
 
       // Group jobs by user to check individual limits
-      const jobsByUser = new Map<string, any[]>();
+      const jobsByUser = new Map<string, DBJobResultModel[]>();
       pendingJobs.forEach((job) => {
+        if (!job.user_id) return;
         const userId = job.user_id;
         if (!jobsByUser.has(userId)) {
           jobsByUser.set(userId, []);
@@ -285,16 +292,18 @@ export class DatabaseQueueService implements OnModuleInit {
       const { data: processingJobs } = await client
         .from('job_queue')
         .select('user_id')
-        .eq('status', 'processing');
+        .eq('status', 'processing')
+        .returns<DBJobResultModel[]>();
 
       const processingByUser = new Map<string, number>();
       processingJobs?.forEach((job) => {
+        if (!job.user_id) return;
         const userId = job.user_id;
         processingByUser.set(userId, (processingByUser.get(userId) || 0) + 1);
       });
 
       // Select jobs to process, respecting per-user limits
-      const jobsToProcess: any[] = [];
+      const jobsToProcess: DBJobResultModel[] = [];
       const availableSlots = this.MAX_CONCURRENT_JOBS - this.activeJobs.size;
 
       for (const [userId, userJobs] of jobsByUser.entries()) {
@@ -336,7 +345,7 @@ export class DatabaseQueueService implements OnModuleInit {
 
       // Process selected jobs concurrently
       for (const job of jobsToProcess) {
-        this.processJobAsync(job);
+        void this.processJobAsync(job);
       }
     } catch (error) {
       this.logger.error('Error in processJobs:', error);
@@ -353,7 +362,7 @@ export class DatabaseQueueService implements OnModuleInit {
       .from('job_queue')
       .select('*')
       .eq('id', jobId)
-      .single();
+      .single<DBJobResultModel>();
 
     if (fetchError || !originalJob) {
       throw new Error('Job not found');
@@ -378,7 +387,6 @@ export class DatabaseQueueService implements OnModuleInit {
         `Too many jobs in queue. Maximum ${this.MAX_JOBS_PER_USER} concurrent jobs allowed.`,
       );
     }
-    console.log('User job count:', userJobCount);
     // Create new job with same payload but reset status
     const { data: newJob, error: insertError } = await client
       .from('job_queue')
@@ -390,7 +398,7 @@ export class DatabaseQueueService implements OnModuleInit {
         progress: 0,
       })
       .select()
-      .single();
+      .single<DBJobResultModel>();
 
     if (insertError) {
       this.logger.error('Failed to create retry job:', insertError);
@@ -408,12 +416,16 @@ export class DatabaseQueueService implements OnModuleInit {
     this.logger.log(`Retry job ${newJob.id} created for original job ${jobId}`);
 
     // Trigger immediate processing check
-    setTimeout(() => this.processJobs(), 100);
+    setTimeout(() => {
+      this.processJobs().catch((error) => {
+        this.logger.error('Error in delayed processJobs:', error);
+      });
+    }, 100);
 
     return newJob.id.toString();
   }
 
-  private async processJobAsync(job: any) {
+  private async processJobAsync(job: DBJobResultModel) {
     const jobId = job.id.toString();
     this.activeJobs.add(jobId);
 
@@ -426,9 +438,9 @@ export class DatabaseQueueService implements OnModuleInit {
     }
   }
 
-  private async processJob(job: any) {
+  private async processJob(job: DBJobResultModel) {
     const client = this.supabase.getClient();
-    const jobId = job.id;
+    const jobId = job.id.toString();
 
     try {
       // Mark as processing
@@ -457,36 +469,62 @@ export class DatabaseQueueService implements OnModuleInit {
       }
 
       // Check usage limit
+      if (!payload.userId) {
+        throw new Error('Invalid job payload: missing userId');
+      }
       const usedCount = await this.auditRepo.countUserAudits(payload.userId);
       const maxFree = 100;
       if (usedCount >= maxFree) {
         throw new Error('Free plan limit reached. Please upgrade.');
       }
 
-      await this.updateJobProgress(jobId, 20);
+      await this.updateJobProgress(jobId.toString(), 20);
 
       let result: any;
 
       // Process based on job type
       switch (job.job_type) {
-        case 'youtube':
-          result = await this.processYouTubeVideo(jobId, payload.configuration);
+        case 'youtube': {
+          if (payload.configuration === null) {
+            throw new Error('Invalid job payload: missing configuration');
+          }
+          result = await this.processYouTubeVideo(
+            jobId.toString(),
+            payload.configuration,
+          );
           break;
-        case 'upload':
+        }
+        case 'upload': {
+          if (!payload.fileData || !payload.accessToken) {
+            throw new Error(
+              'Invalid job payload: missing file data or access token',
+            );
+          }
           result = await this.processUploadedVideo(
-            jobId,
+            jobId.toString(),
             payload.fileData,
             payload.accessToken,
           );
           break;
-        case 'transcript':
-          result = await this.processTranscript(jobId, payload.transcript);
+        }
+        case 'transcript': {
+          if (!payload.transcript) {
+            throw new Error('Invalid job payload: missing transcript');
+          }
+          if (!payload.userId) {
+            throw new Error('Invalid job payload: missing userId');
+          }
+          result = await this.processTranscript(
+            jobId.toString(),
+            payload.transcript,
+          );
           break;
+        }
         default:
           throw new Error(`Unknown job type: ${job.job_type}`);
       }
 
-      await this.updateJobProgress(jobId, 90);
+      await this.updateJobProgress(jobId.toString(), 90);
 
       // Save the audit
       const url =
@@ -498,7 +536,7 @@ export class DatabaseQueueService implements OnModuleInit {
 
       const savedAudit = await this.auditRepo.saveAudit(
         payload.userId,
-        url,
+        url ?? '',
         result,
       );
 
@@ -528,7 +566,7 @@ export class DatabaseQueueService implements OnModuleInit {
         .from('job_queue')
         .update({
           status: 'failed',
-          error_message: error.message,
+          error_message: error instanceof Error ? error.message : String(error),
           completed_at: new Date().toISOString(),
         })
         .eq('id', jobId);
@@ -543,7 +581,7 @@ export class DatabaseQueueService implements OnModuleInit {
   private async processYouTubeVideo(
     jobId: string,
     configuration: AiMessageConfiguration,
-  ): Promise<any> {
+  ): Promise<AuditResponse> {
     await this.updateJobProgress(jobId, 30);
 
     const video = await this.youtubeService.getVideoData(configuration.url);
@@ -557,14 +595,15 @@ export class DatabaseQueueService implements OnModuleInit {
       configuration.model,
     );
 
-    return { video, suggestions };
+    const videoData: AuditResponse = { video, suggestions };
+    return videoData;
   }
 
   private async processUploadedVideo(
     jobId: string,
-    fileData: any,
+    fileData: FilgeDataModel,
     accessToken: string,
-  ): Promise<any> {
+  ): Promise<AuditResponse> {
     const { buffer, originalName, mimetype } = fileData;
 
     await this.updateJobProgress(jobId, 30);
@@ -575,9 +614,12 @@ export class DatabaseQueueService implements OnModuleInit {
       .from('job_queue')
       .select('user_id')
       .eq('id', jobId)
-      .single();
+      .single<{ user_id: string }>();
 
-    const userId = job!.user_id;
+    if (!job || !job.user_id) {
+      throw new Error('Job user ID not found');
+    }
+    const userId = job.user_id;
 
     // Upload to storage
     const file = {
@@ -629,16 +671,14 @@ export class DatabaseQueueService implements OnModuleInit {
       };
     } finally {
       // Clean up temp file
-      try {
-        await fs.unlink(tmpPath);
-      } catch {}
+      await fs.unlink(tmpPath);
     }
   }
 
   private async processTranscript(
     jobId: string,
     transcript: string,
-  ): Promise<any> {
+  ): Promise<AuditResponse> {
     await this.updateJobProgress(jobId, 40);
 
     const summary = await this.aiService.summarizeTranscript(transcript);

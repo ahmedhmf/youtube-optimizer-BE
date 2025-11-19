@@ -6,6 +6,7 @@ import * as bodyParser from 'body-parser';
 import cookieParser from 'cookie-parser';
 import session from 'express-session';
 import helmet from 'helmet';
+import { Request, Response, NextFunction } from 'express';
 import { EnvironmentService } from './common/environment.service';
 import { CSRFService } from './common/csrf.service';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
@@ -61,10 +62,9 @@ async function bootstrap() {
   const maxSize = `${Math.floor(environmentService.getMaxFileSize() / 1024 / 1024)}mb`;
   app.use(bodyParser.json({ limit: maxSize }));
   app.use(bodyParser.urlencoded({ limit: maxSize, extended: true }));
-
   // Force HTTPS redirect in production
   if (environmentService.shouldForceHttps()) {
-    app.use((req, res, next) => {
+    app.use((req: Request, res: Response, next: NextFunction) => {
       if (req.header('x-forwarded-proto') !== 'https') {
         res.redirect(`https://${req.header('host')}${req.url}`);
       } else {

@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
-import { Request, Response } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import * as crypto from 'crypto';
+import express from 'express';
 
 export interface CSRFConfig {
   tokenLength: number;
@@ -23,9 +24,9 @@ export class CSRFService {
   /**
    * Generate a CSRF token for the session
    */
-  generateToken(req: Request): string {
+  generateToken(req: express.Request): string {
     // Generate or retrieve secret from session
-    let secret = req.session[this.config.sessionKey];
+    let secret = req.session?.[this.config.sessionKey] as string | undefined;
     if (!secret) {
       secret = crypto.randomBytes(this.config.tokenLength).toString('base64');
       req.session[this.config.sessionKey] = secret;
@@ -40,7 +41,7 @@ export class CSRFService {
    * Validate CSRF token from request
    */
   validateToken(req: Request): boolean {
-    const secret = req.session[this.config.sessionKey];
+    const secret = req.session[this.config.sessionKey] as string | undefined;
     if (!secret) {
       return false;
     }
@@ -61,7 +62,7 @@ export class CSRFService {
    */
   setCsrfCookie(req: Request, res: Response): void {
     const token = this.generateToken(req);
-    
+
     res.cookie(this.config.cookieName, token, {
       httpOnly: false, // Allow JavaScript access for AJAX
       secure: process.env.NODE_ENV === 'production',
@@ -76,7 +77,7 @@ export class CSRFService {
   shouldProtect(req: Request): boolean {
     const method = req.method?.toLowerCase();
     const safeMethods = ['get', 'head', 'options'];
-    
+
     // Skip safe methods
     if (safeMethods.includes(method)) {
       return false;
@@ -94,10 +95,10 @@ export class CSRFService {
       '/auth/csrf-verify',
       '/auth/social/google',
       '/auth/social/github',
-      '/health'
+      '/health',
     ];
-    
-    return !skipRoutes.some(route => req.path.startsWith(route));
+
+    return !skipRoutes.some((route) => req.path.startsWith(route));
   }
 
   private generateTokenFromSecret(secret: string): string {
@@ -110,10 +111,12 @@ export class CSRFService {
   private extractToken(req: Request): string | null {
     // Try header first
     let token = req.headers[this.config.headerName] as string;
-    
+
     // Try body field
-    if (!token && req.body) {
-      token = req.body[this.config.bodyField];
+    if (!token && req.body && typeof req.body === 'object') {
+      token = (req.body as Record<string, any>)[
+        this.config.bodyField
+      ] as string;
     }
 
     // Try query parameter
@@ -141,14 +144,13 @@ export class CSRFService {
    * Middleware function for CSRF protection
    */
   middleware() {
-    return (req: Request, res: Response, next: Function) => {
+    return (req: Request, res: Response, next: NextFunction) => {
       // Check if this request needs CSRF protection
       if (this.shouldProtect(req)) {
         if (!this.validateToken(req)) {
           throw new BadRequestException('Invalid CSRF token');
         }
       }
-
       next();
     };
   }

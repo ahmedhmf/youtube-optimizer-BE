@@ -56,13 +56,13 @@ export class EnvironmentService {
 
   getCorsOrigins(): string[] {
     const origins = this.configService.get<string>('CORS_ORIGINS', '');
-    
+
     if (!origins) {
       return this.isProduction()
         ? ['https://your-production-domain.com']
         : ['http://localhost:4200', 'http://localhost:3000'];
     }
-    
+
     return origins.split(',').map((origin) => origin.trim());
   }
 

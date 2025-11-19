@@ -3,7 +3,7 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 @Injectable()
 export class SupabaseService {
-  private supabase: SupabaseClient;
+  private supabase: SupabaseClient<any, any, any>;
 
   constructor() {
     this.supabase = createClient(
@@ -12,19 +12,17 @@ export class SupabaseService {
     );
   }
 
-  getClient(): SupabaseClient {
+  getClient(): SupabaseClient<any, any, any> {
     return this.supabase;
   }
 
-  // Service role client for admin operations (bypasses RLS)
-  getServiceClient(): SupabaseClient {
+  getServiceClient(): SupabaseClient<any, any, any> {
     return createClient(
       process.env.SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_KEY!, // This bypasses RLS
+      process.env.SUPABASE_SERVICE_KEY!,
     );
   }
 
-  // Create authenticated client with proper session
   getAuthenticatedClient(accessToken: string): SupabaseClient {
     const authenticatedClient = createClient(
       process.env.SUPABASE_URL!,
@@ -35,9 +33,9 @@ export class SupabaseService {
             Authorization: `Bearer ${accessToken}`,
           },
         },
-      }
+      },
     );
-    
+
     return authenticatedClient;
   }
 }

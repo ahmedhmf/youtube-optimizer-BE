@@ -2,25 +2,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { SupabaseService } from '../supabase/supabase.service';
-
-export interface SessionData {
-  user_id: string;
-  email: string;
-  role: string;
-  device_id?: string;
-  ip_address?: string;
-  user_agent?: string;
-  created_at: Date;
-  last_activity: Date;
-}
-
-export interface RefreshTokenData {
-  token: string;
-  user_id: string;
-  expires_at: Date;
-  device_id?: string;
-  is_revoked: boolean;
-}
+import express from 'express';
+import { SessionData } from './types/session-data.type';
+import { RefreshTokenData } from './types/resfresh-token-data';
+import * as crypto from 'crypto';
 
 @Injectable()
 export class SessionSecurityService {
@@ -41,8 +26,8 @@ export class SessionSecurityService {
     userId: string,
     email: string,
     role: string,
-    request: any,
-    response: any,
+    request: express.Request,
+    response: express.Response,
   ): Promise<{ accessToken: string; sessionId: string }> {
     // Use service role client to bypass RLS for session management
     const client = this.supabase.getServiceClient();
@@ -50,7 +35,8 @@ export class SessionSecurityService {
     // Generate device fingerprint
     const deviceId = this.generateDeviceId(request);
     const ipAddress = this.getClientIp(request);
-    const userAgent = request.headers['user-agent'] || 'unknown';
+    const userAgent: string =
+      (request?.headers?.['user-agent'] as string) || 'unknown';
 
     // Check and cleanup old sessions for this user
     await this.cleanupUserSessions(userId);
@@ -61,9 +47,9 @@ export class SessionSecurityService {
       .select('*')
       .eq('user_id', userId)
       .eq('device_id', deviceId)
-      .single();
+      .single<SessionData>();
 
-    let session: any;
+    let session: SessionData;
 
     if (existingSession) {
       // Update existing session instead of creating new one
@@ -82,7 +68,7 @@ export class SessionSecurityService {
         })
         .eq('id', existingSession.id)
         .select()
-        .single();
+        .single<SessionData>();
 
       if (updateError) {
         this.logger.error('Failed to update session:', updateError);
@@ -107,7 +93,7 @@ export class SessionSecurityService {
         .from('user_sessions')
         .insert(sessionData)
         .select()
-        .single();
+        .single<SessionData>();
 
       if (sessionError) {
         this.logger.error('Failed to create session:', sessionError);
@@ -117,14 +103,12 @@ export class SessionSecurityService {
       session = newSession;
     }
 
-    // Generate refresh token
     const refreshToken = this.generateSecureToken();
     const refreshTokenExpiry = new Date();
     refreshTokenExpiry.setDate(
       refreshTokenExpiry.getDate() + this.REFRESH_TOKEN_EXPIRY_DAYS,
     );
 
-    // Revoke existing refresh tokens for this user-device combination
     await client
       .from('refresh_tokens')
       .update({ is_revoked: true })
@@ -193,12 +177,14 @@ export class SessionSecurityService {
    * Validate and refresh session using HTTP-only cookie
    */
   async refreshSession(
-    request: any,
+    request: express.Request,
     response: any,
   ): Promise<{ accessToken: string } | null> {
-    const refreshToken = request.cookies?.refreshToken;
+    const refreshToken: string | undefined = request.cookies?.refreshToken as
+      | string
+      | undefined;
 
-    if (!refreshToken) {
+    if (!refreshToken || typeof refreshToken !== 'string') {
       return null;
     }
 
@@ -211,7 +197,7 @@ export class SessionSecurityService {
       .eq('token', refreshToken)
       .eq('is_revoked', false)
       .gt('expires_at', new Date().toISOString())
-      .single();
+      .single<RefreshTokenData & { user_sessions: SessionData }>();
 
     if (tokenError || !tokenData) {
       this.logger.warn('Invalid refresh token attempt');
@@ -345,14 +331,15 @@ export class SessionSecurityService {
       .from('user_sessions')
       .select('*')
       .eq('user_id', userId)
-      .order('last_activity', { ascending: false });
+      .order('last_activity', { ascending: false })
+      .returns<SessionData[]>();
 
     if (error) {
       this.logger.error('Failed to get user sessions:', error);
       return [];
     }
 
-    return sessions || [];
+    return sessions ?? [];
   }
 
   private async cleanupUserSessions(userId: string): Promise<void> {
@@ -371,7 +358,7 @@ export class SessionSecurityService {
 
     // Remove oldest sessions beyond the limit
     const sessionsToRemove = sessions.slice(this.MAX_SESSIONS_PER_USER);
-    const sessionIds = sessionsToRemove.map((s) => s.id);
+    const sessionIds = sessionsToRemove.map((s: SessionData) => s.id);
 
     await client
       .from('refresh_tokens')
@@ -393,19 +380,17 @@ export class SessionSecurityService {
       .eq('token', token);
   }
 
-  private clearRefreshTokenCookie(response: any): void {
+  private clearRefreshTokenCookie(response: express.Response): void {
     response.clearCookie('refreshToken', {
       httpOnly: true,
       path: '/auth/refresh',
     });
   }
-
-  private generateDeviceId(request: any): string {
+  private generateDeviceId(request: express.Request): string {
     const userAgent = request.headers['user-agent'] || '';
     const acceptLanguage = request.headers['accept-language'] || '';
     const acceptEncoding = request.headers['accept-encoding'] || '';
 
-    const crypto = require('crypto');
     return crypto
       .createHash('sha256')
       .update(`${userAgent}${acceptLanguage}${acceptEncoding}`)
@@ -413,10 +398,15 @@ export class SessionSecurityService {
       .substring(0, 16);
   }
 
-  private getClientIp(request: any): string {
+  private getClientIp(request: express.Request): string {
+    const xForwardedFor = request.headers['x-forwarded-for'];
+    const xForwardedForIp = Array.isArray(xForwardedFor)
+      ? xForwardedFor[0]
+      : xForwardedFor?.split(',')[0];
+
     return (
-      request.headers['x-forwarded-for']?.split(',')[0] ||
-      request.headers['x-real-ip'] ||
+      xForwardedForIp ||
+      (request.headers['x-real-ip'] as string) ||
       request.connection?.remoteAddress ||
       request.ip ||
       'unknown'
@@ -424,11 +414,15 @@ export class SessionSecurityService {
   }
 
   private generateSecureToken(): string {
-    const crypto = require('crypto');
     return crypto.randomBytes(64).toString('hex');
   }
 
-  private generateAccessToken(payload: any): string {
+  private generateAccessToken(payload: {
+    userId: string;
+    email: string;
+    role: string;
+    sessionId: string;
+  }): string {
     return this.jwtService.sign({
       sub: payload.userId,
       email: payload.email,
@@ -507,7 +501,7 @@ export class SessionSecurityService {
     ipAddress?: string,
     userAgent?: string,
     deviceId?: string,
-    metadata?: any,
+    metadata?: Record<string, unknown>,
   ): Promise<void> {
     const client = this.supabase.getServiceClient();
 
@@ -518,7 +512,7 @@ export class SessionSecurityService {
         ip_address: ipAddress,
         user_agent: userAgent,
         device_id: deviceId,
-        metadata: metadata || {},
+        metadata: metadata ?? {},
         created_at: new Date().toISOString(),
       });
 

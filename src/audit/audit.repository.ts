@@ -1,9 +1,10 @@
 /* eslint-disable no-useless-catch */
 import { Injectable, Logger } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
-import { AuditResponse } from './audit.types';
-import { PaginationOptions } from 'src/model/pagination-options.model';
-import { PaginatedResult } from 'src/model/pagnation.result.model';
+import { AuditResponse } from './models/audit.types';
+import { PaginationOptions } from 'src/auth/types/pagination-options.model';
+import { PaginatedResult } from 'src/auth/types/pagnation.result.model';
+import { DBAuditResultModel } from './models/db-audit-result.model';
 
 @Injectable()
 export class AuditRepository {
@@ -11,11 +12,15 @@ export class AuditRepository {
 
   constructor(private readonly supabase: SupabaseService) {}
 
-  async saveAudit(userId: string, url: string, data: AuditResponse) {
+  async saveAudit(
+    userId: string,
+    url: string,
+    data: AuditResponse,
+  ): Promise<DBAuditResultModel> {
     const client = this.supabase.getClient();
     const { video, suggestions } = data;
 
-    const { data: savedAudit, error } = await client
+    const result = await client
       .from('audits')
       .insert({
         user_id: userId,
@@ -28,8 +33,9 @@ export class AuditRepository {
         ai_image_prompt: suggestions.thumbnailPrompts,
       })
       .select()
-      .single();
+      .single<DBAuditResultModel>();
 
+    const { data: savedAudit, error } = result;
     if (error) throw new Error(error.message);
     return savedAudit;
   }

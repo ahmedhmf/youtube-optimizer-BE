@@ -11,9 +11,3 @@ export interface User {
   createdAt: Date;
   updatedAt: Date;
 }
-
-export interface AuthResponse {
-  accessToken: string;
-  refreshToken: string;
-  user: User;
-}

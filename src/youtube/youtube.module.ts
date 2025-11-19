@@ -7,6 +7,6 @@ import { HttpModule } from '@nestjs/axios';
   imports: [HttpModule],
   providers: [YoutubeService],
   controllers: [YoutubeController],
-  exports: [YoutubeService]
+  exports: [YoutubeService],
 })
 export class YoutubeModule {}

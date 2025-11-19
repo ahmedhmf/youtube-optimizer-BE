@@ -32,7 +32,7 @@ export class AdminController {
 
   @Get('users')
   @RequirePermissions('canAccessAdminPanel')
-  async getAllUsers(@Query() query: PaginationQueryDto) {
+  getAllUsers(@Query() query: PaginationQueryDto) {
     // Implementation would go here - get paginated users
     return { message: 'Get all users with pagination', query };
   }
@@ -46,7 +46,7 @@ export class AdminController {
   @Put('users/:id/role')
   @Throttle({ default: { limit: 10, ttl: 300000 } }) // 10 role changes per 5 minutes
   @RequirePermissions('canManageUsers')
-  async updateUserRole(
+  updateUserRole(
     @Param('id') userId: string,
     @Body() body: { role: UserRole },
   ) {
@@ -57,14 +57,14 @@ export class AdminController {
   @Delete('users/:id')
   @Throttle({ default: { limit: 5, ttl: 600000 } }) // 5 deletions per 10 minutes
   @RequirePermissions('canManageUsers')
-  async deleteUser(@Param('id') userId: string) {
+  deleteUser(@Param('id') userId: string) {
     // Implementation would go here - delete user
     return { message: `Delete user ${userId}` };
   }
 
   @Get('analytics')
   @RequirePermissions('canAccessAdminPanel')
-  async getAnalytics() {
+  getAnalytics() {
     // Implementation would go here - get system analytics
     return {
       totalUsers: 0,
