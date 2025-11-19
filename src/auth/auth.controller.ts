@@ -14,10 +14,6 @@ import {
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { SessionSecurityService } from './session-security.service';
-import { RolesGuard } from './guards/roles.guard';
-import { Roles } from './decorators/roles.decorator';
-import { RequirePermissions } from './decorators/permissions.decorator';
-import { UserRole } from './types/roles.types';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { CSRFGuard } from './guards/csrf.guard';
 import {
@@ -31,7 +27,17 @@ import {
   ResetPasswordDto,
 } from './dto';
 import { User } from './interfaces/user.interface';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiOperation,
+  ApiParam,
+  ApiResponse,
+  ApiSecurity,
+  ApiTags,
+} from '@nestjs/swagger';
 
+@ApiTags('auth')
 @Controller('auth')
 export class AuthController {
   constructor(
@@ -40,6 +46,103 @@ export class AuthController {
   ) {}
 
   @Post('register')
+  @ApiOperation({
+    summary: 'Register New User',
+    description: `
+    Creates a new user account in the system.
+    
+    **Requirements:**
+    - Valid CSRF token (see /auth/csrf-token)
+    - Unique email address
+    - Strong password (min 8 chars, uppercase, lowercase, number)
+    
+    **Rate Limited:** 3 attempts per 5 minutes
+    `,
+  })
+  @ApiBody({
+    description: 'User registration data',
+    type: RegisterDto, // Use your actual DTO
+    examples: {
+      'Valid Registration': {
+        value: {
+          email: 'user@example.com',
+          password: 'SecurePass123!',
+          name: 'John Doe',
+          role: 'user',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'User successfully registered',
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean', example: true },
+        message: { type: 'string', example: 'User registered successfully' },
+        user: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', example: 'uuid-123-456' },
+            email: { type: 'string', example: 'user@example.com' },
+            name: { type: 'string', example: 'John Doe' },
+            role: { type: 'string', example: 'user' },
+            createdAt: { type: 'string', format: 'date-time' },
+          },
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Validation errors or user already exists',
+    schema: {
+      type: 'object',
+      properties: {
+        statusCode: { type: 'number', example: 400 },
+        message: {
+          oneOf: [
+            { type: 'string', example: 'User already exists' },
+            {
+              type: 'array',
+              items: { type: 'string' },
+              example: ['email must be a valid email', 'password is too weak'],
+            },
+          ],
+        },
+        error: { type: 'string', example: 'Bad Request' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'CSRF token missing or invalid',
+    schema: {
+      type: 'object',
+      properties: {
+        statusCode: { type: 'number', example: 403 },
+        message: { type: 'string', example: 'Invalid CSRF token' },
+        error: { type: 'string', example: 'Forbidden' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 429,
+    description: 'Rate limit exceeded',
+    schema: {
+      type: 'object',
+      properties: {
+        statusCode: { type: 'number', example: 429 },
+        message: {
+          type: 'string',
+          example: 'ThrottlerException: Too Many Requests',
+        },
+        error: { type: 'string', example: 'Too Many Requests' },
+      },
+    },
+  })
+  @ApiSecurity('csrf-token', ['X-CSRF-Token'])
   @UseGuards(CSRFGuard)
   @Throttle({ default: { limit: 3, ttl: 300000 } }) // 3 attempts per 5 minutes
   async register(@Body() registerDto: RegisterDto) {
@@ -47,6 +150,102 @@ export class AuthController {
   }
 
   @Post('login')
+  @ApiOperation({
+    summary: 'Authenticate User',
+    description: `
+    Authenticates a user with email and password.
+    
+    **Security Features:**
+    - CSRF protection required
+    - Session security with device tracking
+    - Rate limiting (5 attempts per minute)
+    - Automatic fallback to standard auth if session fails
+    
+    **Returns:**
+    - JWT access token (Bearer token for API calls)
+    - Refresh token (HTTP-only cookie)
+    - User profile information
+    `,
+    externalDocs: {
+      description: 'Authentication Flow Documentation',
+      url: 'https://your-docs.com/auth-flow',
+    },
+  })
+  @ApiBody({
+    description: 'Login credentials',
+    type: LoginDto,
+    examples: {
+      'Standard Login': {
+        value: {
+          email: 'user@example.com',
+          password: 'SecurePass123!',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Login successful - Returns JWT token and user info',
+    schema: {
+      type: 'object',
+      properties: {
+        access_token: {
+          type: 'string',
+          example:
+            'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyMTIzIiwiaWF0IjoxNjM3MTIzNDU2fQ.signature',
+          description: 'JWT access token for API authentication',
+        },
+        refresh_token: {
+          type: 'string',
+          example: 'refresh_token_string_here',
+          description: 'Refresh token (also set as HTTP-only cookie)',
+        },
+        user: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', example: 'uuid-123-456' },
+            email: { type: 'string', example: 'user@example.com' },
+            name: { type: 'string', example: 'John Doe' },
+            role: { type: 'string', example: 'user' },
+            permissions: {
+              type: 'array',
+              items: { type: 'string' },
+              example: ['canUsePremiumFeatures', 'canCreateContent'],
+            },
+          },
+        },
+        session: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', example: 'session-uuid' },
+            deviceInfo: { type: 'string', example: 'Chrome on Windows' },
+            expiresAt: { type: 'string', format: 'date-time' },
+          },
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Invalid credentials',
+    schema: {
+      type: 'object',
+      properties: {
+        statusCode: { type: 'number', example: 401 },
+        message: { type: 'string', example: 'Invalid email or password' },
+        error: { type: 'string', example: 'Unauthorized' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'CSRF token validation failed',
+  })
+  @ApiResponse({
+    status: 429,
+    description: 'Too many login attempts',
+  })
+  @ApiSecurity('csrf-token', ['X-CSRF-Token'])
   @UseGuards(CSRFGuard)
   @Throttle({ default: { limit: 5, ttl: 60000 } }) // 5 attempts per minute
   async login(@Body() loginDto: LoginDto, @Req() req, @Res() res) {
@@ -83,6 +282,34 @@ export class AuthController {
   }
 
   @Post('logout')
+  @ApiOperation({
+    summary: 'Logout User',
+    description: `
+    Logs out the current user and invalidates their session.
+    
+    **Actions Performed:**
+    - Invalidates JWT token
+    - Removes refresh token cookie
+    - Terminates active session
+    - Logs security event
+    `,
+  })
+  @ApiBearerAuth('access-token')
+  @ApiResponse({
+    status: 200,
+    description: 'Successfully logged out',
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean', example: true },
+        message: { type: 'string', example: 'Logged out successfully' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Not authenticated - invalid or missing JWT token',
+  })
   @UseGuards(JwtAuthGuard)
   async logout(@Req() req, @Res() res) {
     try {
@@ -97,17 +324,166 @@ export class AuthController {
   }
 
   @Post('refresh')
+  @ApiOperation({
+    summary: 'Refresh Authentication Token',
+    description: `
+  Refreshes the JWT access token using a valid refresh token.
+  
+  **Requirements:**
+  - Valid refresh token (from HTTP-only cookie or request body)
+  - CSRF token for security
+  
+  **Returns:**
+  - New JWT access token
+  - Updated refresh token (as HTTP-only cookie)
+  - User session information
+  `,
+  })
+  @ApiBody({
+    description: 'Refresh token data (optional if using cookies)',
+    type: RefreshTokenDto,
+    required: false,
+    examples: {
+      'Token in Body': {
+        value: {
+          refreshToken: 'refresh_token_string_here',
+        },
+      },
+      'Cookie Only': {
+        value: {},
+        description: 'Refresh token automatically read from HTTP-only cookie',
+      },
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Token refreshed successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        access_token: {
+          type: 'string',
+          example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+          description: 'New JWT access token',
+        },
+        refresh_token: {
+          type: 'string',
+          example: 'new_refresh_token_here',
+          description: 'Updated refresh token (also set as cookie)',
+        },
+        user: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            email: { type: 'string' },
+            role: { type: 'string' },
+          },
+        },
+        expiresIn: {
+          type: 'number',
+          example: 3600,
+          description: 'Token expiration time in seconds',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid or expired refresh token',
+    schema: {
+      type: 'object',
+      properties: {
+        statusCode: { type: 'number', example: 400 },
+        message: { type: 'string', example: 'Failed to refresh token' },
+        error: { type: 'string', example: 'Bad Request' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'CSRF token missing or invalid',
+  })
+  @ApiResponse({
+    status: 429,
+    description: 'Rate limit exceeded - too many refresh attempts',
+  })
+  @ApiSecurity('csrf-token', ['X-CSRF-Token'])
   async refresh(@Body() refreshDto: RefreshTokenDto) {
     return this.authService.refresh(refreshDto.refreshToken);
   }
 
   @Get('profile')
+  @ApiOperation({
+    summary: 'Get User Profile',
+    description: "Retrieves the authenticated user's profile information",
+  })
+  @ApiBearerAuth('access-token')
+  @ApiResponse({
+    status: 200,
+    description: 'Profile retrieved successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', example: 'uuid-123-456' },
+        email: { type: 'string', example: 'user@example.com' },
+        name: { type: 'string', example: 'John Doe' },
+        role: { type: 'string', example: 'user' },
+        permissions: {
+          type: 'array',
+          items: { type: 'string' },
+        },
+        createdAt: { type: 'string', format: 'date-time' },
+        lastLoginAt: { type: 'string', format: 'date-time' },
+        profilePicture: {
+          type: 'string',
+          example: 'https://example.com/avatar.jpg',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - Invalid JWT token',
+  })
   @UseGuards(JwtAuthGuard)
   async getProfile(@Req() req): Promise<User> {
     return this.authService.getProfile(req.user.id);
   }
 
   @Put('profile')
+  @ApiOperation({
+    summary: 'Update User Profile',
+    description: "Updates the authenticated user's profile information",
+  })
+  @ApiBearerAuth('access-token')
+  @ApiSecurity('csrf-token', ['X-CSRF-Token'])
+  @ApiBody({
+    type: UpdateProfileDto,
+    examples: {
+      'Profile Update': {
+        value: {
+          name: 'Jane Doe',
+          bio: 'Software Developer',
+          preferences: {
+            theme: 'dark',
+            notifications: true,
+          },
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Profile updated successfully',
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'CSRF token required',
+  })
   @UseGuards(JwtAuthGuard, CSRFGuard)
   async updateProfile(
     @Req() req,
@@ -116,40 +492,39 @@ export class AuthController {
     return this.authService.updateProfile(req.user.id, updateProfileDto);
   }
 
-  @Get('test')
-  @UseGuards(JwtAuthGuard)
-  testAuth(@Req() req: any) {
-    return {
-      message: 'JWT Auth working!',
-      user: req.user,
-      timestamp: new Date().toISOString(),
-    };
-  }
-
-  @Get('test/admin')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN)
-  testAdminOnly(@Req() req: any) {
-    return {
-      message: 'Admin access working!',
-      user: req.user,
-      timestamp: new Date().toISOString(),
-    };
-  }
-
-  @Get('test/premium')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @RequirePermissions('canUsePremiumFeatures')
-  @Throttle({ default: { limit: 5, ttl: 300000 } }) // 5 premium feature accesses per 5 minutes
-  testPremiumFeatures(@Req() req: any) {
-    return {
-      message: 'Premium features access working!',
-      user: req.user,
-      timestamp: new Date().toISOString(),
-    };
-  }
-
   @Post('social/google')
+  @ApiOperation({
+    summary: 'Google OAuth Login',
+    description: `
+    Authenticates user via Google OAuth token.
+    
+    **Flow:**
+    1. Client obtains Google OAuth token
+    2. Send token to this endpoint
+    3. Server verifies token with Google
+    4. Creates/updates user account
+    5. Returns JWT tokens
+    `,
+  })
+  @ApiBody({
+    type: SocialLoginRequestDto,
+    examples: {
+      'Google Login': {
+        value: {
+          token: 'google_oauth_token_here',
+          provider: 'google',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Google authentication successful',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid Google token',
+  })
   async googleLogin(
     @Body() body: SocialLoginRequestDto,
     @Req() req,
@@ -202,16 +577,85 @@ export class AuthController {
     }
   }
 
-  @Post('social/github')
-  async githubLogin(@Body() body: SocialLoginRequestDto) {
-    console.log('GitHub login request body:', body);
-    return await this.authService.socialLogin({
-      code: body.code,
-      provider: SocialProvider.GITHUB,
-    });
-  }
-
   @Post('forgot-password')
+  @ApiOperation({
+    summary: 'Request Password Reset',
+    description: `
+  Initiates a password reset process by sending a reset link to the user's email.
+  
+  **Security Features:**
+  - Rate limited to prevent abuse
+  - CSRF protection
+  - Email validation
+  - Secure reset token generation
+  
+  **Process:**
+  1. Validates email exists in system
+  2. Generates secure reset token
+  3. Sends email with reset link
+  4. Token expires in 1 hour
+  `,
+  })
+  @ApiBody({
+    type: ForgotPasswordDto,
+    description: 'Email address for password reset',
+    examples: {
+      'Password Reset Request': {
+        value: {
+          email: 'user@example.com',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Password reset email sent successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean', example: true },
+        message: {
+          type: 'string',
+          example: 'Password reset instructions sent to your email',
+        },
+        email: { type: 'string', example: 'user@example.com' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid email address or user not found',
+    schema: {
+      type: 'object',
+      properties: {
+        statusCode: { type: 'number', example: 400 },
+        message: {
+          type: 'string',
+          example: 'User with this email does not exist',
+        },
+        error: { type: 'string', example: 'Bad Request' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'CSRF token required',
+  })
+  @ApiResponse({
+    status: 429,
+    description: 'Too many password reset requests - rate limited',
+    schema: {
+      type: 'object',
+      properties: {
+        statusCode: { type: 'number', example: 429 },
+        message: {
+          type: 'string',
+          example: 'Too many password reset attempts. Try again in 5 minutes.',
+        },
+      },
+    },
+  })
+  @ApiSecurity('csrf-token', ['X-CSRF-Token'])
   @UseGuards(CSRFGuard)
   @Throttle({ default: { limit: 2, ttl: 300000 } }) // 2 attempts per 5 minutes
   async requestPasswordReset(@Body() forgotPasswordDto: ForgotPasswordDto) {
@@ -227,6 +671,88 @@ export class AuthController {
   }
 
   @Post('reset-password')
+  @ApiOperation({
+    summary: 'Reset User Password',
+    description: `
+  Completes the password reset process using a valid reset token.
+  
+  **Requirements:**
+  - Valid reset token (from email link)
+  - New password meeting security requirements
+  - CSRF protection
+  
+  **Security:**
+  - Token expires after 1 hour
+  - One-time use tokens
+  - Password strength validation
+  - Automatic login after reset
+  `,
+  })
+  @ApiBody({
+    type: ResetPasswordDto,
+    description: 'Password reset data with token and new password',
+    examples: {
+      'Password Reset': {
+        value: {
+          token: 'reset_token_from_email',
+          newPassword: 'NewSecurePassword123!',
+          confirmPassword: 'NewSecurePassword123!',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Password reset successful',
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean', example: true },
+        message: { type: 'string', example: 'Password reset successful' },
+        access_token: {
+          type: 'string',
+          example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+          description: 'JWT token for automatic login',
+        },
+        user: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            email: { type: 'string' },
+            name: { type: 'string' },
+          },
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description:
+      'Invalid or expired reset token, or password validation failed',
+    schema: {
+      type: 'object',
+      properties: {
+        statusCode: { type: 'number', example: 400 },
+        message: {
+          oneOf: [
+            { type: 'string', example: 'Invalid or expired reset token' },
+            { type: 'string', example: 'Password does not meet requirements' },
+            { type: 'string', example: 'Passwords do not match' },
+          ],
+        },
+        error: { type: 'string', example: 'Bad Request' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'CSRF token required',
+  })
+  @ApiResponse({
+    status: 429,
+    description: 'Too many reset attempts',
+  })
+  @ApiSecurity('csrf-token', ['X-CSRF-Token'])
   @UseGuards(CSRFGuard)
   @Throttle({ default: { limit: 3, ttl: 300000 } }) // 3 attempts per 5 minutes
   async resetPassword(@Body() resetPasswordDto: ResetPasswordDto) {
@@ -241,9 +767,91 @@ export class AuthController {
     }
   }
 
-  // Session Management Endpoints
-
   @Post('refresh')
+  @ApiOperation({
+    summary: 'Refresh Authentication Token',
+    description: `
+  Refreshes the JWT access token using a valid refresh token.
+  
+  **Requirements:**
+  - Valid refresh token (from HTTP-only cookie or request body)
+  - CSRF token for security
+  
+  **Returns:**
+  - New JWT access token
+  - Updated refresh token (as HTTP-only cookie)
+  - User session information
+  `,
+  })
+  @ApiBody({
+    description: 'Refresh token data (optional if using cookies)',
+    type: RefreshTokenDto,
+    required: false,
+    examples: {
+      'Token in Body': {
+        value: {
+          refreshToken: 'refresh_token_string_here',
+        },
+      },
+      'Cookie Only': {
+        value: {},
+        description: 'Refresh token automatically read from HTTP-only cookie',
+      },
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Token refreshed successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        access_token: {
+          type: 'string',
+          example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+          description: 'New JWT access token',
+        },
+        refresh_token: {
+          type: 'string',
+          example: 'new_refresh_token_here',
+          description: 'Updated refresh token (also set as cookie)',
+        },
+        user: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            email: { type: 'string' },
+            role: { type: 'string' },
+          },
+        },
+        expiresIn: {
+          type: 'number',
+          example: 3600,
+          description: 'Token expiration time in seconds',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid or expired refresh token',
+    schema: {
+      type: 'object',
+      properties: {
+        statusCode: { type: 'number', example: 400 },
+        message: { type: 'string', example: 'Failed to refresh token' },
+        error: { type: 'string', example: 'Bad Request' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'CSRF token missing or invalid',
+  })
+  @ApiResponse({
+    status: 429,
+    description: 'Rate limit exceeded - too many refresh attempts',
+  })
+  @ApiSecurity('csrf-token', ['X-CSRF-Token'])
   @UseGuards(CSRFGuard)
   @Throttle({ default: { limit: 10, ttl: 60000 } }) // 10 attempts per minute
   async refreshToken(@Req() req, @Res() res) {
@@ -256,6 +864,34 @@ export class AuthController {
   }
 
   @Get('sessions')
+  @ApiOperation({
+    summary: 'List User Sessions',
+    description: 'Retrieves all active sessions for the authenticated user',
+  })
+  @ApiBearerAuth('access-token')
+  @ApiSecurity('csrf-token', ['X-CSRF-Token'])
+  @ApiResponse({
+    status: 200,
+    description: 'Sessions retrieved successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        sessions: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              deviceInfo: { type: 'string' },
+              ipAddress: { type: 'string' },
+              lastActivity: { type: 'string', format: 'date-time' },
+              isCurrentSession: { type: 'boolean' },
+            },
+          },
+        },
+      },
+    },
+  })
   @UseGuards(JwtAuthGuard, CSRFGuard)
   async getUserSessions(@Req() req) {
     const sessions = await this.sessionSecurityService.getUserSessions(
@@ -265,6 +901,53 @@ export class AuthController {
   }
 
   @Post('logout-all')
+  @ApiOperation({
+    summary: 'Logout from All Devices',
+    description: `
+  Logs out the user from all active sessions and devices.
+  
+  **Actions Performed:**
+  - Invalidates all JWT tokens for the user
+  - Revokes all active sessions
+  - Clears all refresh tokens
+  - Removes session cookies
+  - Logs security event
+  
+  **Use Cases:**
+  - Security breach response
+  - Account compromise mitigation
+  - User-initiated security cleanup
+  `,
+  })
+  @ApiBearerAuth('access-token')
+  @ApiResponse({
+    status: 200,
+    description: 'Successfully logged out from all devices',
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean', example: true },
+        message: {
+          type: 'string',
+          example: 'Logged out from all devices successfully',
+        },
+        revokedSessions: {
+          type: 'number',
+          example: 3,
+          description: 'Number of sessions that were terminated',
+        },
+        timestamp: {
+          type: 'string',
+          format: 'date-time',
+          description: 'When the logout occurred',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - Invalid JWT token',
+  })
   @UseGuards(JwtAuthGuard)
   async logoutAllDevices(@Req() req, @Res() res) {
     await this.sessionSecurityService.revokeAllUserSessions(req.user.id);
@@ -277,6 +960,67 @@ export class AuthController {
   }
 
   @Delete('sessions/:sessionId')
+  @ApiOperation({
+    summary: 'Revoke Specific Session',
+    description: `
+  Revokes a specific active session by its ID.
+  
+  **Security:**
+  - Users can only revoke their own sessions
+  - CSRF protection required
+  - Session validation
+  - Automatic cleanup of associated tokens
+  
+  **Use Cases:**
+  - Remove suspicious login
+  - Logout specific device
+  - Session management
+  `,
+  })
+  @ApiParam({
+    name: 'sessionId',
+    description: 'Unique identifier of the session to revoke',
+    example: 'session-uuid-12345',
+    type: 'string',
+  })
+  @ApiBearerAuth('access-token')
+  @ApiSecurity('csrf-token', ['X-CSRF-Token'])
+  @ApiResponse({
+    status: 200,
+    description: 'Session revoked successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean', example: true },
+        message: { type: 'string', example: 'Session revoked successfully' },
+        sessionId: { type: 'string', example: 'session-uuid-12345' },
+        revokedAt: { type: 'string', format: 'date-time' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Session not found or does not belong to user',
+    schema: {
+      type: 'object',
+      properties: {
+        statusCode: { type: 'number', example: 400 },
+        message: {
+          type: 'string',
+          example: 'Session not found or unauthorized',
+        },
+        error: { type: 'string', example: 'Bad Request' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - Invalid JWT token',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'CSRF token required',
+  })
   @UseGuards(JwtAuthGuard, CSRFGuard)
   async revokeSession(
     @Param('sessionId') sessionId: string,
@@ -286,23 +1030,5 @@ export class AuthController {
     // TODO: Verify session belongs to user
     await this.sessionSecurityService.revokeSession(sessionId, res);
     return res.json({ message: 'Session revoked successfully' });
-  }
-
-  // Test endpoint for security events
-  @Post('test-security-event')
-  @UseGuards(JwtAuthGuard)
-  async testSecurityEvent(@Req() req) {
-    await this.sessionSecurityService.logSecurityEvent(
-      req.user.id,
-      'test_event',
-      req.ip || 'unknown',
-      req.headers['user-agent'] || 'unknown',
-      undefined,
-      {
-        testData: 'This is a test security event',
-        timestamp: new Date().toISOString(),
-      },
-    );
-    return { message: 'Test security event logged' };
   }
 }

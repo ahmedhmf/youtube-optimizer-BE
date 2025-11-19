@@ -12,9 +12,19 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBody,
+  ApiBearerAuth,
+  ApiParam,
+  ApiQuery,
+  ApiConsumes,
+  ApiSecurity,
+  ApiHeader,
+} from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import { YoutubeService } from '../youtube/youtube.service';
-import { AiService } from '../ai/ai.service';
 import { AuditRepository } from './audit.repository';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -39,17 +49,65 @@ const ALLOWED = [
   'audio/wav',
 ];
 
+@ApiTags('Video Analysis & AI Optimization')
 @Controller('analyze')
+@ApiBearerAuth('access-token')
 export class AuditController {
   constructor(
-    private readonly youtubeService: YoutubeService,
-    private readonly aiService: AiService,
     private readonly auditRepo: AuditRepository,
     private readonly supabase: SupabaseService,
     private readonly storage: SupabaseStorageService,
     private readonly queueService: DatabaseQueueService, // Add this
   ) {}
 
+  @ApiOperation({
+    summary: 'Analyze YouTube Video',
+    description: 'Submit a YouTube video for AI-powered optimization analysis. Returns a job ID to track analysis progress.',
+  })
+  @ApiBody({
+    description: 'AI configuration for video analysis',
+    schema: {
+      type: 'object',
+      properties: {
+        configuration: {
+          type: 'object',
+          properties: {
+            videoUrl: { type: 'string', example: 'https://youtube.com/watch?v=example' },
+            analysisType: { type: 'string', example: 'full-optimization' },
+            targetAudience: { type: 'string', example: 'general' },
+            focusAreas: {
+              type: 'array',
+              items: { type: 'string' },
+              example: ['title', 'thumbnail', 'description']
+            }
+          },
+          required: ['videoUrl']
+        }
+      },
+      required: ['configuration']
+    }
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Video analysis job created successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        jobId: { type: 'string', example: 'queue_123456789' },
+        message: { type: 'string', example: 'Video analysis queued successfully. Check job status for progress.' }
+      }
+    }
+  })
+  @ApiResponse({ status: 400, description: 'Invalid configuration or video URL' })
+  @ApiResponse({ status: 401, description: 'Authentication required' })
+  @ApiResponse({ status: 403, description: 'Insufficient permissions' })
+  @ApiResponse({ status: 429, description: 'Rate limit exceeded (3 requests per 5 minutes)' })
+  @ApiHeader({
+    name: 'Authorization',
+    description: 'Bearer token for authentication',
+    required: true,
+    schema: { type: 'string', example: 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...' }
+  })
   @Post('video')
   @Throttle({ default: { limit: 3, ttl: 300000 } }) // 3 AI requests per 5 minutes
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -83,6 +141,40 @@ export class AuditController {
     }
   }
 
+  @ApiOperation({
+    summary: 'Analyze Uploaded Video File',
+    description: 'Upload and analyze a video file (MP4, WebM, MOV, MP3, WAV). Maximum file size: 200MB. Returns job ID for tracking.',
+  })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    description: 'Video file upload for analysis',
+    schema: {
+      type: 'object',
+      properties: {
+        video: {
+          type: 'string',
+          format: 'binary',
+          description: 'Video file to analyze (MP4, WebM, MOV, MP3, WAV - Max 200MB)'
+        }
+      },
+      required: ['video']
+    }
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Video upload queued successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        jobId: { type: 'string', example: 'queue_987654321' },
+        message: { type: 'string', example: 'Video upload queued successfully. Check job status for progress.' }
+      }
+    }
+  })
+  @ApiResponse({ status: 400, description: 'Invalid file type or missing file' })
+  @ApiResponse({ status: 401, description: 'Authentication required' })
+  @ApiResponse({ status: 413, description: 'File too large (max 200MB)' })
+  @ApiResponse({ status: 429, description: 'Rate limit exceeded (5 uploads per 5 minutes)' })
   @Post('upload')
   @Throttle({ default: { limit: 5, ttl: 300000 } }) // 5 uploads per 5 minutes
   @UseGuards(JwtAuthGuard)
@@ -137,6 +229,49 @@ export class AuditController {
     }
   }
 
+  @ApiOperation({
+    summary: 'Analyze Video Transcript',
+    description: 'Submit a video transcript for AI analysis and optimization suggestions. Useful for content already transcribed.',
+  })
+  @ApiBody({
+    description: 'Transcript and AI configuration for analysis',
+    schema: {
+      type: 'object',
+      properties: {
+        configuration: {
+          type: 'object',
+          properties: {
+            analysisType: { type: 'string', example: 'content-optimization' },
+            targetAudience: { type: 'string', example: 'tech-professionals' },
+            focusAreas: {
+              type: 'array',
+              items: { type: 'string' },
+              example: ['engagement', 'clarity', 'seo']
+            }
+          }
+        },
+        transcript: {
+          type: 'string',
+          example: 'Welcome to today\'s tutorial on web development. In this video, we\'ll explore...'
+        }
+      },
+      required: ['configuration', 'transcript']
+    }
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Transcript analysis queued successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        jobId: { type: 'string', example: 'queue_transcript_456' },
+        message: { type: 'string', example: 'Transcript analysis queued successfully. Check job status for progress.' }
+      }
+    }
+  })
+  @ApiResponse({ status: 400, description: 'Invalid transcript or configuration' })
+  @ApiResponse({ status: 401, description: 'Authentication required' })
+  @ApiResponse({ status: 429, description: 'Rate limit exceeded (3 analyses per 5 minutes)' })
   @Post('transcript')
   @Throttle({ default: { limit: 3, ttl: 300000 } }) // 3 transcript analyses per 5 minutes
   @UseGuards(JwtAuthGuard)
@@ -172,6 +307,46 @@ export class AuditController {
   }
 
   // NEW ENDPOINTS for job management
+  @ApiOperation({
+    summary: 'Get Analysis Job Status',
+    description: 'Check the current status and progress of a video analysis job. Users can only access their own jobs.',
+  })
+  @ApiParam({
+    name: 'jobId',
+    description: 'Unique identifier for the analysis job',
+    example: 'queue_123456789'
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Job status retrieved successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', example: 'queue_123456789' },
+        status: { type: 'string', enum: ['waiting', 'active', 'completed', 'failed', 'cancelled'], example: 'completed' },
+        progress: { type: 'number', example: 100 },
+        data: {
+          type: 'object',
+          properties: {
+            userId: { type: 'string' },
+            type: { type: 'string', enum: ['youtube', 'upload', 'transcript'] },
+            jobId: { type: 'string' }
+          }
+        },
+        result: {
+          type: 'object',
+          properties: {
+            analysis: { type: 'object' },
+            recommendations: { type: 'array', items: { type: 'string' } },
+            completedAt: { type: 'string', format: 'date-time' }
+          }
+        }
+      }
+    }
+  })
+  @ApiResponse({ status: 400, description: 'Invalid job ID or unauthorized access' })
+  @ApiResponse({ status: 401, description: 'Authentication required' })
+  @ApiResponse({ status: 404, description: 'Job not found' })
   @Get('job/:jobId/status')
   @UseGuards(JwtAuthGuard)
   async getJobStatus(@Param('jobId') jobId: string, @Req() req) {
@@ -191,6 +366,28 @@ export class AuditController {
     }
   }
 
+  @ApiOperation({
+    summary: 'Cancel Analysis Job',
+    description: 'Cancel a pending or active analysis job. Only the job owner can cancel their jobs.',
+  })
+  @ApiParam({
+    name: 'jobId',
+    description: 'Unique identifier for the job to cancel',
+    example: 'queue_123456789'
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Job cancellation result',
+    schema: {
+      type: 'object',
+      properties: {
+        cancelled: { type: 'boolean', example: true },
+        message: { type: 'string', example: 'Job cancelled successfully' }
+      }
+    }
+  })
+  @ApiResponse({ status: 400, description: 'Job not found, already completed, or unauthorized' })
+  @ApiResponse({ status: 401, description: 'Authentication required' })
   @Post('job/:jobId/cancel')
   @UseGuards(JwtAuthGuard)
   async cancelJob(@Param('jobId') jobId: string, @Req() req) {
@@ -213,6 +410,30 @@ export class AuditController {
     }
   }
 
+  @ApiOperation({
+    summary: 'Get User Analysis Jobs',
+    description: 'Retrieve all analysis jobs for the authenticated user, including status and progress information.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'User jobs retrieved successfully',
+    schema: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', example: 'queue_123456789' },
+          status: { type: 'string', enum: ['waiting', 'active', 'completed', 'failed', 'cancelled'] },
+          progress: { type: 'number', minimum: 0, maximum: 100 },
+          createdAt: { type: 'string', format: 'date-time' },
+          completedAt: { type: 'string', format: 'date-time', nullable: true },
+          type: { type: 'string', enum: ['youtube', 'upload', 'transcript'] },
+          data: { type: 'object' }
+        }
+      }
+    }
+  })
+  @ApiResponse({ status: 401, description: 'Authentication required' })
   @Get('jobs')
   @UseGuards(JwtAuthGuard, RolesGuard)
   async getUserJobs(@Req() req) {
@@ -225,6 +446,29 @@ export class AuditController {
     }
   }
 
+  @ApiOperation({
+    summary: 'Retry Failed Analysis Job',
+    description: 'Retry a failed or cancelled analysis job with a new job ID. Only failed or cancelled jobs can be retried.',
+  })
+  @ApiParam({
+    name: 'jobId',
+    description: 'Unique identifier for the failed job to retry',
+    example: 'queue_failed_123'
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Job retry initiated successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean', example: true },
+        newJobId: { type: 'string', example: 'queue_retry_456' },
+        message: { type: 'string', example: 'Job has been queued for retry with a new job ID' }
+      }
+    }
+  })
+  @ApiResponse({ status: 400, description: 'Job cannot be retried or unauthorized access' })
+  @ApiResponse({ status: 401, description: 'Authentication required' })
   @Post('job/:jobId/retry')
   @UseGuards(JwtAuthGuard)
   async retryJob(@Param('jobId') jobId: string, @Req() req) {
@@ -256,6 +500,52 @@ export class AuditController {
   }
 
   // Keep your existing endpoints as they are
+  @ApiOperation({
+    summary: 'Get User Analysis History',
+    description: 'Retrieve paginated history of completed video analyses for the authenticated user with search and sorting capabilities.',
+  })
+  @ApiQuery({ name: 'page', required: false, type: Number, description: 'Page number (default: 1)', example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Items per page (1-50, default: 10)', example: 10 })
+  @ApiQuery({ name: 'search', required: false, type: String, description: 'Search in video titles, descriptions, or URLs', example: 'tutorial' })
+  @ApiQuery({ name: 'sortBy', required: false, type: String, description: 'Sort field (default: created_at)', example: 'created_at' })
+  @ApiQuery({ name: 'sortOrder', required: false, enum: ['asc', 'desc'], description: 'Sort direction (default: desc)', example: 'desc' })
+  @ApiResponse({
+    status: 200,
+    description: 'User history retrieved successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        data: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              user_id: { type: 'string' },
+              url: { type: 'string', nullable: true },
+              audit_data: { type: 'object' },
+              thumbnail_url: { type: 'string', nullable: true },
+              created_at: { type: 'string', format: 'date-time' },
+              updated_at: { type: 'string', format: 'date-time' }
+            }
+          }
+        },
+        pagination: {
+          type: 'object',
+          properties: {
+            page: { type: 'number', example: 1 },
+            limit: { type: 'number', example: 10 },
+            total: { type: 'number', example: 42 },
+            totalPages: { type: 'number', example: 5 },
+            hasNext: { type: 'boolean', example: true },
+            hasPrev: { type: 'boolean', example: false }
+          }
+        }
+      }
+    }
+  })
+  @ApiResponse({ status: 400, description: 'Invalid pagination parameters' })
+  @ApiResponse({ status: 401, description: 'Authentication required' })
   @Get('history')
   @UseGuards(JwtAuthGuard)
   async getUserHistory(
@@ -324,6 +614,31 @@ export class AuditController {
     }
   }
 
+  @ApiOperation({
+    summary: 'Delete Analysis Record',
+    description: 'Delete a video analysis record and associated thumbnail. Requires special permissions and user ownership verification.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'Unique identifier for the analysis record to delete',
+    example: 'audit_uuid_123'
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Analysis record deleted successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean', example: true },
+        message: { type: 'string', example: 'Audit deleted successfully' },
+        deletedId: { type: 'string', example: 'audit_uuid_123' }
+      }
+    }
+  })
+  @ApiResponse({ status: 400, description: 'Audit not found or unauthorized' })
+  @ApiResponse({ status: 401, description: 'Authentication required' })
+  @ApiResponse({ status: 403, description: 'Insufficient permissions' })
+  @ApiSecurity('bearer')
   @Delete('delete/:id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @RequirePermissions('canDeleteAnyContent')

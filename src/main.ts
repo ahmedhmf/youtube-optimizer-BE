@@ -8,6 +8,7 @@ import session from 'express-session';
 import helmet from 'helmet';
 import { EnvironmentService } from './common/environment.service';
 import { CSRFService } from './common/csrf.service';
+import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 
 dotenv.config();
 
@@ -71,6 +72,15 @@ async function bootstrap() {
       }
     });
   }
+
+  const config = new DocumentBuilder()
+    .setTitle('Descripta APIs')
+    .setDescription('The Descripta API description')
+    .setVersion('1.0')
+    .addTag('descripta')
+    .build();
+  const documentFactory = () => SwaggerModule.createDocument(app, config);
+  SwaggerModule.setup('api', app, documentFactory);
 
   await app.listen(environmentService.getPort());
 }
