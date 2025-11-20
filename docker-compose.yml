@@ -1,0 +1,86 @@
+# Docker Compose for YouTube Optimizer
+version: '3.8'
+
+services:
+  # Main API Application
+  youtube-optimizer-api:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: youtube-optimizer-api
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    env_file:
+      - .env.production
+    depends_on:
+      - redis
+    restart: unless-stopped
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - youtube-optimizer-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Redis for caching and rate limiting
+  redis:
+    image: redis:7-alpine
+    container_name: youtube-optimizer-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - youtube-optimizer-network
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-defaultpassword}
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: youtube-optimizer-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+      - ./logs/nginx:/var/log/nginx
+    depends_on:
+      - youtube-optimizer-api
+    restart: unless-stopped
+    networks:
+      - youtube-optimizer-network
+
+  # Optional: Database (if not using Supabase)
+  # postgres:
+  #   image: postgres:15-alpine
+  #   container_name: youtube-optimizer-db
+  #   environment:
+  #     - POSTGRES_DB=youtube_optimizer
+  #     - POSTGRES_USER=${DB_USER:-postgres}
+  #     - POSTGRES_PASSWORD=${DB_PASSWORD}
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #     - ./database-setup.sql:/docker-entrypoint-initdb.d/01-schema.sql
+  #     - ./user-feedback-schema.sql:/docker-entrypoint-initdb.d/02-feedback.sql
+  #   ports:
+  #     - "5432:5432"
+  #   restart: unless-stopped
+  #   networks:
+  #     - youtube-optimizer-network
+
+volumes:
+  redis_data:
+  # postgres_data:
+
+networks:
+  youtube-optimizer-network:
+    driver: bridge

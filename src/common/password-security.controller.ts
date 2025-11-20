@@ -7,6 +7,13 @@ import {
   ValidationPipe,
   BadRequestException,
 } from '@nestjs/common';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+  ApiBody,
+} from '@nestjs/swagger';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PasswordBreachService } from '../common/password-breach.service';
@@ -43,7 +50,9 @@ interface PasswordCheckResponse {
   warningMessage?: string;
 }
 
+@ApiTags('Password Security')
 @Controller('password-security')
+@ApiBearerAuth('access-token')
 export class PasswordSecurityController {
   constructor(
     private readonly passwordBreachService: PasswordBreachService,
@@ -51,11 +60,79 @@ export class PasswordSecurityController {
     private readonly auditLoggingService: AuditLoggingService,
   ) {}
 
-  /**
-   * Check if a password has been compromised in data breaches
-   */
   @Post('check')
   @UseGuards(JwtAuthGuard)
+  @ApiOperation({
+    summary: 'Check Password for Data Breaches',
+    description:
+      'Analyzes a password for security breaches using HaveIBeenPwned database. Uses k-anonymity to protect password privacy. Provides strength analysis and security recommendations.',
+  })
+  @ApiBody({
+    description: 'Password to check for breaches and security analysis',
+    schema: {
+      type: 'object',
+      properties: {
+        password: {
+          type: 'string',
+          description: 'Password to analyze for security breaches',
+          example: 'MySecurePassword123!',
+        },
+      },
+      required: ['password'],
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Password analysis completed successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        isBreached: { type: 'boolean', example: true },
+        breachCount: { type: 'number', example: 12543, nullable: true },
+        riskLevel: {
+          type: 'string',
+          enum: ['low', 'medium', 'high', 'critical'],
+          example: 'high',
+        },
+        strengthAnalysis: {
+          type: 'object',
+          properties: {
+            length: { type: 'number', example: 12 },
+            hasUppercase: { type: 'boolean', example: true },
+            hasLowercase: { type: 'boolean', example: true },
+            hasNumbers: { type: 'boolean', example: true },
+            hasSpecialChars: { type: 'boolean', example: true },
+            entropy: { type: 'number', example: 65.2 },
+            strengthScore: {
+              type: 'number',
+              example: 4,
+              minimum: 1,
+              maximum: 5,
+            },
+          },
+        },
+        recommendation: {
+          type: 'string',
+          example:
+            '⚠️ This password has been found in data breaches. Choose a different password.',
+        },
+        isAllowedForRegistration: { type: 'boolean', example: false },
+        warningMessage: {
+          type: 'string',
+          example: 'Password appears in breach databases',
+          nullable: true,
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid password or request data',
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - JWT token required',
+  })
   async checkPassword(
     @Body(ValidationPipe) dto: PasswordCheckDto,
     @Req() req: Request,
@@ -260,11 +337,53 @@ export class PasswordSecurityController {
     }
   }
 
-  /**
-   * Get security recommendations for password creation
-   */
   @Post('recommendations')
   @UseGuards(JwtAuthGuard)
+  @ApiOperation({
+    summary: 'Get Password Security Recommendations',
+    description:
+      'Provides comprehensive password security recommendations, best practices, and common mistakes to avoid when creating secure passwords.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Password security recommendations retrieved successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        recommendations: {
+          type: 'array',
+          items: { type: 'string' },
+          example: [
+            'Use at least 12 characters for better security',
+            'Include a mix of uppercase and lowercase letters',
+            'Add numbers and special symbols (!@#$%^&*)',
+          ],
+        },
+        bestPractices: {
+          type: 'array',
+          items: { type: 'string' },
+          example: [
+            'Enable two-factor authentication when possible',
+            'Regularly update passwords for important accounts',
+            'Never share passwords or write them down insecurely',
+          ],
+        },
+        commonMistakes: {
+          type: 'array',
+          items: { type: 'string' },
+          example: [
+            'Using the same password everywhere',
+            'Adding just numbers to the end (password123)',
+            'Using keyboard patterns (qwerty, 123456)',
+          ],
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - JWT token required',
+  })
   getPasswordRecommendations(): {
     recommendations: string[];
     bestPractices: string[];
