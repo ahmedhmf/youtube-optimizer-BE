@@ -1,4 +1,3 @@
-# Railway.app deployment configuration
 {
   "build": {
     "builder": "NIXPACKS"
