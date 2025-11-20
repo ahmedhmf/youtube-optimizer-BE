@@ -10,6 +10,7 @@ import { AuthModule } from './auth/auth.module';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { CommonModule } from './common/common.module';
 import { SecurityMiddleware } from './common/security.middleware';
+import { IPRateLimitMiddleware } from './common/ip-rate-limit.middleware';
 import { EnvironmentService } from './common/environment.service';
 
 @Module({
@@ -45,6 +46,13 @@ import { EnvironmentService } from './common/environment.service';
 })
 export class AppModule {
   configure(consumer: MiddlewareConsumer) {
-    consumer.apply(SecurityMiddleware).forRoutes('*');
+    // Apply rate limiting first, then security middleware
+    consumer
+      .apply(IPRateLimitMiddleware)
+      .forRoutes('*');
+    
+    consumer
+      .apply(SecurityMiddleware)
+      .forRoutes('*');
   }
 }

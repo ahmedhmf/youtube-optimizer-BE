@@ -11,6 +11,9 @@ import { SecurityAuditController } from './security-audit.controller';
 import { PasswordBreachService } from './password-breach.service';
 import { PasswordSecurityService } from './password-security.service';
 import { PasswordSecurityController } from './password-security.controller';
+import { IPRateLimitService } from './ip-rate-limit.service';
+import { IPRateLimitMiddleware } from './ip-rate-limit.middleware';
+import { IPRateLimitController } from './ip-rate-limit.controller';
 import { SupabaseModule } from '../supabase/supabase.module';
 
 @Module({
@@ -24,11 +27,14 @@ import { SupabaseModule } from '../supabase/supabase.module';
     AuditLoggingService,
     PasswordBreachService,
     PasswordSecurityService,
+    IPRateLimitService,
+    IPRateLimitMiddleware,
   ],
   controllers: [
     SecurityController,
     SecurityAuditController,
     PasswordSecurityController,
+    IPRateLimitController,
   ],
   exports: [
     SecurityConfigService,
@@ -36,6 +42,8 @@ import { SupabaseModule } from '../supabase/supabase.module';
     AuditLoggingService,
     PasswordBreachService,
     PasswordSecurityService,
+    IPRateLimitService,
+    IPRateLimitMiddleware,
     EnvironmentService,
     InputSanitizationService,
     ValidationAndSanitizationPipe,
