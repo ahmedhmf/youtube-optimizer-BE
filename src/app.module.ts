@@ -9,6 +9,7 @@ import { SupabaseModule } from './supabase/supabase.module';
 import { AuthModule } from './auth/auth.module';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { CommonModule } from './common/common.module';
+import { OnboardingModule } from './common/onboarding.module';
 import { SecurityMiddleware } from './common/security.middleware';
 import { IPRateLimitMiddleware } from './common/ip-rate-limit.middleware';
 import { EnvironmentService } from './common/environment.service';
@@ -20,6 +21,7 @@ import { EnvironmentService } from './common/environment.service';
       envFilePath: '.env',
     }),
     CommonModule,
+    OnboardingModule,
     AuthModule,
     AuditModule,
     SupabaseModule,
