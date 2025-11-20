@@ -468,14 +468,39 @@ export class DatabaseQueueService implements OnModuleInit {
         );
       }
 
-      // Check usage limit
+      // Check usage limit using subscription system
       if (!payload.userId) {
         throw new Error('Invalid job payload: missing userId');
       }
-      const usedCount = await this.auditRepo.countUserAudits(payload.userId);
-      const maxFree = 100;
-      if (usedCount >= maxFree) {
-        throw new Error('Free plan limit reached. Please upgrade.');
+      
+      // Check subscription limits (this will be injected properly in a real implementation)
+      try {
+        // For now, we'll import and use the service directly
+        // In production, this should be properly injected
+        const { SubscriptionService } = await import('../common/subscription.service');
+        const { SupabaseService } = await import('../supabase/supabase.service');
+        
+        const supabaseService = new SupabaseService();
+        const subscriptionService = new SubscriptionService(supabaseService);
+        
+        const canProceed = await subscriptionService.incrementUsage(payload.userId, 0); // Check without incrementing
+        if (!canProceed) {
+          const usageStats = await subscriptionService.getUsageStats(payload.userId);
+          throw new Error(
+            `You've reached your monthly limit of ${usageStats.features.maxAnalysesPerMonth} analyses. Please upgrade to continue.`
+          );
+        }
+        
+        // If we can proceed, increment the usage
+        await subscriptionService.incrementUsage(payload.userId, 1);
+      } catch (error) {
+        // Fallback to old system if subscription service fails
+        this.logger.warn('Subscription service unavailable, using fallback limits:', error);
+        const usedCount = await this.auditRepo.countUserAudits(payload.userId);
+        const maxFree = 100;
+        if (usedCount >= maxFree) {
+          throw new Error('Free plan limit reached. Please upgrade.');
+        }
       }
 
       await this.updateJobProgress(jobId.toString(), 20);
