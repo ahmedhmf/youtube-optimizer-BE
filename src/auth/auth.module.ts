@@ -19,11 +19,13 @@ import { CSRFGuard } from './guards/csrf.guard';
 import { CSRFController } from './csrf.controller';
 import { TokenBlacklistService } from './token-blacklist.service';
 import { TokenTestController } from './token-test.controller';
+import { CommonModule } from '../common/common.module';
 
 @Module({
   imports: [
     SupabaseModule,
     HttpModule,
+    CommonModule,
     ScheduleModule.forRoot(),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
@@ -39,7 +41,12 @@ import { TokenTestController } from './token-test.controller';
       inject: [ConfigService],
     }),
   ],
-  controllers: [AuthController, AdminController, CSRFController, TokenTestController],
+  controllers: [
+    AuthController,
+    AdminController,
+    CSRFController,
+    TokenTestController,
+  ],
   providers: [
     AuthService,
     JwtStrategy,

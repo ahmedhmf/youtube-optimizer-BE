@@ -37,6 +37,9 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { User } from './types/user.interface';
+import { AuditLoggingService } from 'src/common/audit-logging.service';
+import { AuditEventType } from 'src/common/types/audit-event.type';
+import { AuditStatus } from 'src/common/types/audit-status.type';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -44,6 +47,7 @@ export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly sessionSecurityService: SessionSecurityService,
+    private readonly auditLoggingService: AuditLoggingService,
   ) {}
 
   @Post('register')
@@ -253,6 +257,9 @@ export class AuthController {
     @Req() req: express.Request,
     @Res() res: express.Response,
   ): Promise<express.Response<any, Record<string, any>>> {
+    const ipAddress = req.ip;
+    const userAgent = req.get('User-Agent');
+
     try {
       // Use enhanced session security login
       const result = await this.authService.loginWithSession(
@@ -260,6 +267,20 @@ export class AuthController {
         req,
         res,
       );
+
+      // Log successful login
+      await this.auditLoggingService.logAuthEvent(
+        AuditEventType.LOGIN,
+        result.user?.id,
+        ipAddress,
+        userAgent,
+        {
+          email: loginDto.email,
+          loginMethod: 'session',
+        },
+        AuditStatus.SUCCESS,
+      );
+
       return res.json(result);
     } catch (sessionError) {
       console.warn(
@@ -270,9 +291,41 @@ export class AuthController {
       try {
         // Fallback to regular login if session creation fails
         const result = await this.authService.login(loginDto);
+
+        // Log successful login (fallback method)
+        await this.auditLoggingService.logAuthEvent(
+          AuditEventType.LOGIN,
+          result.user?.id,
+          ipAddress,
+          userAgent,
+          {
+            email: loginDto.email,
+            loginMethod: 'standard',
+            fallbackReason:
+              sessionError instanceof Error
+                ? sessionError.message
+                : String(sessionError),
+          },
+          AuditStatus.SUCCESS,
+        );
+
         return res.json(result);
       } catch (error) {
         console.error('Login error:', error);
+
+        // Log failed login attempt
+        await this.auditLoggingService.logAuthEvent(
+          AuditEventType.LOGIN_FAILED,
+          undefined,
+          ipAddress,
+          userAgent,
+          {
+            email: loginDto.email,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          AuditStatus.FAILURE,
+        );
+
         throw error;
       }
     }
@@ -323,6 +376,16 @@ export class AuthController {
         sameSite: 'strict',
       });
 
+      // Log logout without token
+      await this.auditLoggingService.logAuthEvent(
+        AuditEventType.LOGOUT,
+        undefined,
+        req.ip,
+        req.get('User-Agent'),
+        { reason: 'no_token' },
+        AuditStatus.SUCCESS,
+      );
+
       return res.json({
         success: true,
         message: 'Logged out successfully (no active token)',
@@ -335,19 +398,55 @@ export class AuthController {
       if (tokenParts.length === 3) {
         const payload = JSON.parse(
           Buffer.from(tokenParts[1], 'base64').toString(),
-        );
+        ) as { sub?: string; [key: string]: any };
         const userId = payload.sub;
 
         if (userId) {
           // Blacklist the token
           try {
             await this.authService.logout(userId, token);
+
+            // Log successful logout with token blacklisting
+            await this.auditLoggingService.logAuthEvent(
+              AuditEventType.LOGOUT,
+              userId,
+              req.ip,
+              req.get('User-Agent'),
+              {
+                tokenBlacklisted: true,
+                method: 'token_blacklist',
+              },
+              AuditStatus.SUCCESS,
+            );
           } catch (blacklistError) {
             console.error('Error during token blacklisting:', blacklistError);
-            // Continue with logout even if blacklisting fails
+
+            // Log logout with blacklisting failure
+            await this.auditLoggingService.logAuthEvent(
+              AuditEventType.LOGOUT,
+              userId,
+              req.ip,
+              req.get('User-Agent'),
+              {
+                tokenBlacklisted: false,
+                error:
+                  blacklistError instanceof Error
+                    ? blacklistError.message
+                    : String(blacklistError),
+              },
+              AuditStatus.WARNING,
+            );
           }
         } else {
           console.log('No userId found in token payload');
+          await this.auditLoggingService.logAuthEvent(
+            AuditEventType.LOGOUT,
+            undefined,
+            req.ip,
+            req.get('User-Agent'),
+            { reason: 'invalid_token_payload' },
+            AuditStatus.WARNING,
+          );
         }
       }
 
@@ -587,11 +686,27 @@ export class AuthController {
   })
   async googleLogin(
     @Body() body: SocialLoginRequestDto,
-    @Req() req: Request,
+    @Req() req: express.Request,
     @Res() res: express.Response,
   ): Promise<express.Response<any, Record<string, any>>> {
+    const ipAddress = req.ip || 'unknown';
+    const userAgent = req.get('User-Agent') || 'unknown';
+
     try {
       if (!body.token) {
+        // Log missing token attempt
+        await this.auditLoggingService.logAuthEvent(
+          AuditEventType.LOGIN_FAILED,
+          undefined,
+          ipAddress,
+          userAgent,
+          {
+            provider: 'google',
+            error: 'Google token is required',
+            tokenProvided: false,
+          },
+          AuditStatus.FAILURE,
+        );
         throw new BadRequestException('Google token is required');
       }
 
@@ -604,6 +719,21 @@ export class AuthController {
         req,
         res,
       );
+
+      // Log successful Google login
+      await this.auditLoggingService.logAuthEvent(
+        AuditEventType.LOGIN,
+        result.user?.id,
+        ipAddress,
+        userAgent,
+        {
+          provider: 'google',
+          loginMethod: 'social_session',
+          email: result.user?.email,
+        },
+        AuditStatus.SUCCESS,
+      );
+
       return res.json(result);
     } catch (sessionError) {
       console.warn(
@@ -617,9 +747,50 @@ export class AuthController {
           token: body.token,
           provider: SocialProvider.GOOGLE,
         });
+
+        // Log successful Google login (fallback method)
+        await this.auditLoggingService.logAuthEvent(
+          AuditEventType.LOGIN,
+          result.user?.id,
+          ipAddress,
+          userAgent,
+          {
+            provider: 'google',
+            loginMethod: 'social_standard',
+            email: result.user?.email,
+            fallbackReason:
+              sessionError instanceof Error
+                ? sessionError.message
+                : String(sessionError),
+          },
+          AuditStatus.SUCCESS,
+        );
+
         return res.json(result);
       } catch (error) {
         console.error('Google login error:', error);
+
+        // Log failed Google login attempt with detailed error information
+        await this.auditLoggingService.logAuthEvent(
+          AuditEventType.LOGIN_FAILED,
+          undefined,
+          ipAddress,
+          userAgent,
+          {
+            provider: 'google',
+            error: error instanceof Error ? error.message : String(error),
+            errorType:
+              error instanceof Error ? error.constructor.name : typeof error,
+            tokenProvided: !!body.token,
+            tokenLength: body.token?.length || 0,
+            sessionErrorMessage:
+              sessionError instanceof Error
+                ? sessionError.message
+                : String(sessionError),
+          },
+          AuditStatus.FAILURE,
+        );
+
         throw error;
       }
     }
@@ -1076,9 +1247,9 @@ export class AuthController {
   /**
    * Extract JWT token from Authorization header
    */
-  private extractTokenFromHeader(request: any): string | undefined {
+  private extractTokenFromHeader(request: express.Request): string | undefined {
     try {
-      const authHeader = request.headers?.authorization;
+      const authHeader = request.headers.authorization;
       if (!authHeader) {
         console.log('No authorization header found');
         return undefined;

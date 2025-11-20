@@ -70,7 +70,11 @@ async function bootstrap() {
       retryAfter: '15 minutes',
     },
     skip: (req) => {
-      const authPaths = ['/auth/login', '/auth/register', '/auth/forgot-password'];
+      const authPaths = [
+        '/auth/login',
+        '/auth/register',
+        '/auth/forgot-password',
+      ];
       return !authPaths.some((path) => req.path.startsWith(path));
     },
   });

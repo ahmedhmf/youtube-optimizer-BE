@@ -5,8 +5,6 @@ import {
   BlacklistReason,
 } from './token-blacklist.service';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
-import { JwtService } from '@nestjs/jwt';
-import { AuthService } from './auth.service';
 
 @ApiTags('Token Testing')
 @Controller('test-token')

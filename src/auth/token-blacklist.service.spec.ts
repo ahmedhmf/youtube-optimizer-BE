@@ -1,5 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { TokenBlacklistService, BlacklistReason } from './token-blacklist.service';
+import {
+  TokenBlacklistService,
+  BlacklistReason,
+} from './token-blacklist.service';
 import { SupabaseService } from '../supabase/supabase.service';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -64,7 +67,8 @@ describe('TokenBlacklistService', () => {
   });
 
   describe('blacklistToken', () => {
-    const mockToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyLCJleHAiOjE1MTYyNDkwMjJ9.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c';
+    const mockToken =
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyLCJleHAiOjE1MTYyNDkwMjJ9.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c';
     const mockUserId = 'user-123';
 
     beforeEach(() => {
@@ -75,27 +79,33 @@ describe('TokenBlacklistService', () => {
       });
 
       // Mock successful database insert
-      mockSupabaseClient.insert.mockResolvedValue({ 
-        data: null, 
-        error: null 
+      mockSupabaseClient.insert.mockResolvedValue({
+        data: null,
+        error: null,
       });
     });
 
     it('should blacklist a token successfully', async () => {
-      await service.blacklistToken(mockToken, mockUserId, BlacklistReason.LOGOUT);
+      await service.blacklistToken(
+        mockToken,
+        mockUserId,
+        BlacklistReason.LOGOUT,
+      );
 
       expect(mockJwtService.decode).toHaveBeenCalledWith(mockToken);
-      expect(mockSupabaseClient.from).toHaveBeenCalledWith('blacklisted_tokens');
+      expect(mockSupabaseClient.from).toHaveBeenCalledWith(
+        'blacklisted_tokens',
+      );
       expect(mockSupabaseClient.insert).toHaveBeenCalled();
     });
 
     it('should handle database errors gracefully', async () => {
-      mockSupabaseClient.insert.mockResolvedValue({ 
-        error: { message: 'Database error' } 
+      mockSupabaseClient.insert.mockResolvedValue({
+        error: { message: 'Database error' },
       });
 
       await expect(
-        service.blacklistToken(mockToken, mockUserId, BlacklistReason.LOGOUT)
+        service.blacklistToken(mockToken, mockUserId, BlacklistReason.LOGOUT),
       ).rejects.toThrow('Failed to blacklist token');
     });
   });
@@ -165,7 +175,10 @@ describe('TokenBlacklistService', () => {
         error: null,
       });
 
-      await service.blacklistAllUserTokens(mockUserId, BlacklistReason.PASSWORD_CHANGE);
+      await service.blacklistAllUserTokens(
+        mockUserId,
+        BlacklistReason.PASSWORD_CHANGE,
+      );
 
       expect(mockSupabaseClient.update).toHaveBeenCalledWith({
         token_version: 6,
@@ -245,7 +258,7 @@ describe('TokenBlacklistService', () => {
     it('should return true for valid token version', async () => {
       // Token issued after user update
       const userUpdatedAt = new Date(Date.now() - 3600000); // 1 hour ago
-      
+
       mockSupabaseClient.single.mockResolvedValue({
         data: {
           token_version: 1,
@@ -254,7 +267,10 @@ describe('TokenBlacklistService', () => {
         error: null,
       });
 
-      const result = await service.isUserTokenVersionValid(mockUserId, tokenIssuedAt);
+      const result = await service.isUserTokenVersionValid(
+        mockUserId,
+        tokenIssuedAt,
+      );
 
       expect(result).toBe(true);
     });
@@ -262,7 +278,7 @@ describe('TokenBlacklistService', () => {
     it('should return false for invalid token version', async () => {
       // Token issued before user update
       const userUpdatedAt = new Date(Date.now() + 3600000); // 1 hour from now
-      
+
       mockSupabaseClient.single.mockResolvedValue({
         data: {
           token_version: 2,
@@ -271,7 +287,10 @@ describe('TokenBlacklistService', () => {
         error: null,
       });
 
-      const result = await service.isUserTokenVersionValid(mockUserId, tokenIssuedAt);
+      const result = await service.isUserTokenVersionValid(
+        mockUserId,
+        tokenIssuedAt,
+      );
 
       expect(result).toBe(false);
     });
@@ -282,7 +301,10 @@ describe('TokenBlacklistService', () => {
         error: { code: 'PGRST116' },
       });
 
-      const result = await service.isUserTokenVersionValid(mockUserId, tokenIssuedAt);
+      const result = await service.isUserTokenVersionValid(
+        mockUserId,
+        tokenIssuedAt,
+      );
 
       expect(result).toBe(true); // Fail open
     });

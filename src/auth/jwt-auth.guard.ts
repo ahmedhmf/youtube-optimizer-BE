@@ -1,4 +1,8 @@
-import { Injectable, ExecutionContext, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  ExecutionContext,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { TokenBlacklistService } from './token-blacklist.service';
 
@@ -18,7 +22,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     // First, let the JWT strategy validate the token
     const result = await super.canActivate(context);
-    
+
     if (!result) {
       return false;
     }
@@ -26,13 +30,14 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     // Extract token from request
     const request = context.switchToHttp().getRequest();
     const token = this.extractTokenFromHeader(request);
-    
+
     if (!token) {
       throw new UnauthorizedException('Token not found');
     }
 
     // Check if token is blacklisted
-    const isBlacklisted = await this.tokenBlacklistService.isTokenBlacklisted(token);
+    const isBlacklisted =
+      await this.tokenBlacklistService.isTokenBlacklisted(token);
     if (isBlacklisted) {
       throw new UnauthorizedException('Token has been revoked');
     }
@@ -40,10 +45,11 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     // Check if user's token version is still valid (for bulk invalidation)
     const user = request.user as JwtUser;
     if (user?.id && user?.iat) {
-      const isVersionValid = await this.tokenBlacklistService.isUserTokenVersionValid(
-        user.id,
-        user.iat,
-      );
+      const isVersionValid =
+        await this.tokenBlacklistService.isUserTokenVersionValid(
+          user.id,
+          user.iat,
+        );
       if (!isVersionValid) {
         throw new UnauthorizedException('Token has been invalidated');
       }

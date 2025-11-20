@@ -21,7 +21,10 @@ import { SocialAuthService } from './social-auth.service';
 import { SocialProvider, SocialUserInfo } from './dto/social-login.dto';
 import { AccountLockoutService } from './account-lockout.service';
 import { SessionSecurityService } from './session-security.service';
-import { TokenBlacklistService, BlacklistReason } from './token-blacklist.service';
+import {
+  TokenBlacklistService,
+  BlacklistReason,
+} from './token-blacklist.service';
 import { User } from './types/user.interface';
 import { Profile } from './types/profiles.type';
 import { AuthResponse } from './types/auth-response.type';
@@ -221,7 +224,7 @@ export class AuthService {
 
   async logout(userId: string, token?: string): Promise<{ success: boolean }> {
     console.log('AuthService.logout called:', { userId, hasToken: !!token });
-    
+
     try {
       // Blacklist the current token if provided
       if (token) {
@@ -240,11 +243,11 @@ export class AuthService {
       console.log('Cleaning up sessions for user:', userId);
       await this.sessionSecurityService.logout(userId);
       console.log('Sessions cleaned up successfully');
-      
+
       return { success: true };
     } catch (error) {
       console.error('Error during logout:', error);
-      
+
       // Try to blacklist token even if other operations fail
       if (token && !error.message?.includes('blacklist')) {
         try {
@@ -259,7 +262,7 @@ export class AuthService {
           console.error('Fallback token blacklisting failed:', blacklistError);
         }
       }
-      
+
       // Fallback cleanup
       const client = this.supabase.getClient();
       await client.from('refresh_tokens').delete().eq('user_id', userId);
