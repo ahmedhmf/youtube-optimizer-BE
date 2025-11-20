@@ -40,6 +40,7 @@ import { User } from './types/user.interface';
 import { AuditLoggingService } from 'src/common/audit-logging.service';
 import { AuditEventType } from 'src/common/types/audit-event.type';
 import { AuditStatus } from 'src/common/types/audit-status.type';
+import { PasswordSecurityService } from 'src/common/password-security.service';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -48,6 +49,7 @@ export class AuthController {
     private readonly authService: AuthService,
     private readonly sessionSecurityService: SessionSecurityService,
     private readonly auditLoggingService: AuditLoggingService,
+    private readonly passwordSecurityService: PasswordSecurityService,
   ) {}
 
   @Post('register')
@@ -150,7 +152,21 @@ export class AuthController {
   @ApiSecurity('csrf-token', ['X-CSRF-Token'])
   @UseGuards(CSRFGuard)
   @Throttle({ default: { limit: 3, ttl: 300000 } }) // 3 attempts per 5 minutes
-  async register(@Body() registerDto: RegisterDto) {
+  async register(
+    @Body() registerDto: RegisterDto,
+    @Req() req: express.Request,
+  ) {
+    const ipAddress = req.ip || req.connection.remoteAddress;
+    const userAgent = req.get('user-agent');
+
+    // Validate password security before registration
+    await this.passwordSecurityService.validateRegistrationPassword(
+      registerDto.password,
+      undefined, // No user ID yet as they're registering
+      ipAddress,
+      userAgent,
+    );
+
     return this.authService.register(registerDto);
   }
 
@@ -268,6 +284,15 @@ export class AuthController {
         res,
       );
 
+      // Check password breach status after successful login
+      const passwordCheck =
+        await this.passwordSecurityService.checkLoginPassword(
+          loginDto.password,
+          result.user?.id,
+          ipAddress,
+          userAgent,
+        );
+
       // Log successful login
       await this.auditLoggingService.logAuthEvent(
         AuditEventType.LOGIN,
@@ -277,11 +302,22 @@ export class AuthController {
         {
           email: loginDto.email,
           loginMethod: 'session',
+          passwordBreached: passwordCheck.shouldForcePasswordChange,
+          passwordWarning: passwordCheck.warning,
         },
         AuditStatus.SUCCESS,
       );
 
-      return res.json(result);
+      // Add password security info to response
+      const responseData = {
+        ...result,
+        security: {
+          shouldChangePassword: passwordCheck.shouldForcePasswordChange,
+          passwordWarning: passwordCheck.warning,
+        },
+      };
+
+      return res.json(responseData);
     } catch (sessionError) {
       console.warn(
         'Session security login failed, falling back to standard login:',
@@ -292,6 +328,15 @@ export class AuthController {
         // Fallback to regular login if session creation fails
         const result = await this.authService.login(loginDto);
 
+        // Check password breach status after successful login
+        const passwordCheck =
+          await this.passwordSecurityService.checkLoginPassword(
+            loginDto.password,
+            result.user?.id,
+            ipAddress,
+            userAgent,
+          );
+
         // Log successful login (fallback method)
         await this.auditLoggingService.logAuthEvent(
           AuditEventType.LOGIN,
@@ -301,6 +346,8 @@ export class AuthController {
           {
             email: loginDto.email,
             loginMethod: 'standard',
+            passwordBreached: passwordCheck.shouldForcePasswordChange,
+            passwordWarning: passwordCheck.warning,
             fallbackReason:
               sessionError instanceof Error
                 ? sessionError.message
@@ -309,7 +356,16 @@ export class AuthController {
           AuditStatus.SUCCESS,
         );
 
-        return res.json(result);
+        // Add password security info to response
+        const responseData = {
+          ...result,
+          security: {
+            shouldChangePassword: passwordCheck.shouldForcePasswordChange,
+            passwordWarning: passwordCheck.warning,
+          },
+        };
+
+        return res.json(responseData);
       } catch (error) {
         console.error('Login error:', error);
 
@@ -968,7 +1024,21 @@ export class AuthController {
   @ApiSecurity('csrf-token', ['X-CSRF-Token'])
   @UseGuards(CSRFGuard)
   @Throttle({ default: { limit: 3, ttl: 300000 } }) // 3 attempts per 5 minutes
-  async resetPassword(@Body() resetPasswordDto: ResetPasswordDto) {
+  async resetPassword(
+    @Body() resetPasswordDto: ResetPasswordDto,
+    @Req() req: express.Request,
+  ) {
+    const ipAddress = req.ip || req.connection.remoteAddress;
+    const userAgent = req.get('user-agent');
+
+    // Validate password security before reset
+    await this.passwordSecurityService.validatePasswordChange(
+      resetPasswordDto.newPassword,
+      resetPasswordDto.token, // Use token as user identifier for now
+      ipAddress,
+      userAgent,
+    );
+
     const result = await this.authService.resetPassword(resetPasswordDto);
     return result;
   }

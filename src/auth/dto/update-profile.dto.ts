@@ -19,7 +19,9 @@ export class UpdateProfileDto {
   @IsString({ message: 'Name must be a string' })
   @MinLength(1, { message: 'Name cannot be empty' })
   @MaxLength(100, { message: 'Name must not exceed 100 characters' })
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }: { value: any }): string | undefined =>
+    typeof value === 'string' ? value.trim() : undefined,
+  )
   @Matches(/^[a-zA-Z\s\-']+$/, {
     message: 'Name can only contain letters, spaces, hyphens, and apostrophes',
   })

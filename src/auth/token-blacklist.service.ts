@@ -21,14 +21,6 @@ export enum BlacklistReason {
   ACCOUNT_DISABLED = 'account_disabled',
   SECURITY_BREACH = 'security_breach',
 }
-
-interface JwtPayload {
-  exp: number;
-  iat?: number;
-  sub?: string;
-  [key: string]: any;
-}
-
 @Injectable()
 export class TokenBlacklistService implements OnModuleInit {
   private readonly tokenCache = new Map<string, boolean>();

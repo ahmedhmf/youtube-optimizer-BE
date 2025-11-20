@@ -1,10 +1,17 @@
 import { Controller, Post, Body, Get, UseGuards, Req } from '@nestjs/common';
+import { Request } from 'express';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import {
   TokenBlacklistService,
   BlacklistReason,
 } from './token-blacklist.service';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+
+interface AuthenticatedRequest extends Request {
+  user?: {
+    id: string;
+  };
+}
 
 @ApiTags('Token Testing')
 @Controller('test-token')
@@ -15,7 +22,7 @@ export class TokenTestController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Test token blacklisting' })
-  async testBlacklistToken(@Req() req: any) {
+  async testBlacklistToken(@Req() req: AuthenticatedRequest) {
     const token = this.extractTokenFromHeader(req);
     const userId = req.user?.id;
 
@@ -39,7 +46,7 @@ export class TokenTestController {
     } catch (error) {
       return {
         error: 'Failed to blacklist token',
-        details: error.message,
+        details: error instanceof Error ? error.message : String(error),
         userId,
       };
     }
@@ -49,7 +56,7 @@ export class TokenTestController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Check if current token is blacklisted' })
-  async checkTokenBlacklist(@Req() req: any) {
+  async checkTokenBlacklist(@Req() req: AuthenticatedRequest) {
     const token = this.extractTokenFromHeader(req);
     const userId = req.user?.id;
 
@@ -69,7 +76,7 @@ export class TokenTestController {
     } catch (error) {
       return {
         error: 'Failed to check token blacklist',
-        details: error.message,
+        details: error instanceof Error ? error.message : String(error),
         userId,
       };
     }
@@ -86,14 +93,14 @@ export class TokenTestController {
     } catch (error) {
       return {
         error: 'Failed to get blacklist stats',
-        details: error.message,
+        details: error instanceof Error ? error.message : String(error),
       };
     }
   }
 
   @Get('debug-token')
   @ApiOperation({ summary: 'Debug token validation without guards' })
-  async debugToken(@Req() req: any) {
+  debugToken(@Req() req: AuthenticatedRequest) {
     const token = this.extractTokenFromHeader(req);
 
     if (!token) {
@@ -109,7 +116,7 @@ export class TokenTestController {
 
       const payload = JSON.parse(
         Buffer.from(tokenParts[1], 'base64').toString(),
-      );
+      ) as { exp?: number; [key: string]: any };
 
       return {
         success: true,
@@ -160,8 +167,14 @@ export class TokenTestController {
     }
   }
 
-  private extractTokenFromHeader(request: any): string | undefined {
-    const [type, token] = request.headers.authorization?.split(' ') ?? [];
+  private extractTokenFromHeader(
+    request: AuthenticatedRequest,
+  ): string | undefined {
+    const authorization = request.headers?.authorization;
+    if (!authorization || typeof authorization !== 'string') {
+      return undefined;
+    }
+    const [type, token] = authorization.split(' ');
     return type === 'Bearer' ? token : undefined;
   }
 }
