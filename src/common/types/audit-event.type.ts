@@ -45,4 +45,9 @@ export enum AuditEventType {
   API_ACCESS = 'api_access',
   API_ERROR = 'api_error',
   RATE_LIMIT_EXCEEDED = 'rate_limit_exceeded',
+
+  // User Feedback Events
+  FEEDBACK_SUBMITTED = 'feedback_submitted',
+  FEATURE_REQUESTED = 'feature_requested',
+  FEATURE_USED = 'feature_used',
 }

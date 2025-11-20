@@ -14,6 +14,8 @@ import { PasswordSecurityController } from './password-security.controller';
 import { IPRateLimitService } from './ip-rate-limit.service';
 import { IPRateLimitMiddleware } from './ip-rate-limit.middleware';
 import { IPRateLimitController } from './ip-rate-limit.controller';
+import { UserFeedbackService } from './user-feedback.service';
+import { UserFeedbackController } from './user-feedback.controller';
 import { SupabaseModule } from '../supabase/supabase.module';
 
 @Module({
@@ -29,12 +31,14 @@ import { SupabaseModule } from '../supabase/supabase.module';
     PasswordSecurityService,
     IPRateLimitService,
     IPRateLimitMiddleware,
+    UserFeedbackService,
   ],
   controllers: [
     SecurityController,
     SecurityAuditController,
     PasswordSecurityController,
     IPRateLimitController,
+    UserFeedbackController,
   ],
   exports: [
     SecurityConfigService,
@@ -44,6 +48,7 @@ import { SupabaseModule } from '../supabase/supabase.module';
     PasswordSecurityService,
     IPRateLimitService,
     IPRateLimitMiddleware,
+    UserFeedbackService,
     EnvironmentService,
     InputSanitizationService,
     ValidationAndSanitizationPipe,

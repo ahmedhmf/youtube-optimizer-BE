@@ -6,4 +6,5 @@ export enum AuditEventCategory {
   SECURITY = 'security',
   SYSTEM = 'system',
   API = 'api',
+  USER_ACTIVITY = 'user_activity',
 }
