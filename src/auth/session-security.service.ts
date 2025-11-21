@@ -180,72 +180,91 @@ export class SessionSecurityService {
     request: express.Request,
     response: any,
   ): Promise<{ accessToken: string } | null> {
-    const refreshToken: string | undefined = request.cookies?.refreshToken as
-      | string
-      | undefined;
+    try {
+      const refreshToken: string | undefined = request.cookies?.refreshToken as
+        | string
+        | undefined;
 
-    if (!refreshToken || typeof refreshToken !== 'string') {
-      return null;
-    }
+      if (!refreshToken || typeof refreshToken !== 'string') {
+        return null;
+      }
 
-    const client = this.supabase.getServiceClient();
+      const client = this.supabase.getServiceClient();
 
-    // Validate refresh token
-    const { data: tokenData, error: tokenError } = await client
-      .from('refresh_tokens')
-      .select('*, user_sessions(*)')
-      .eq('token', refreshToken)
-      .eq('is_revoked', false)
-      .gt('expires_at', new Date().toISOString())
-      .single<RefreshTokenData & { user_sessions: SessionData }>();
+      // Step 1: Get refresh token data
+      const { data: tokenData, error: tokenError } = await client
+        .from('refresh_tokens')
+        .select('*')
+        .eq('token', refreshToken)
+        .eq('is_revoked', false)
+        .gt('expires_at', new Date().toISOString())
+        .single<RefreshTokenData>();
+      if (tokenError || !tokenData) {
+        this.logger.warn('Invalid refresh token attempt');
+        this.clearRefreshTokenCookie(response);
+        return null;
+      }
 
-    if (tokenError || !tokenData) {
-      this.logger.warn('Invalid refresh token attempt');
-      this.clearRefreshTokenCookie(response);
-      return null;
-    }
+      // Step 2: Get corresponding session data using user_id and device_id
+      const { data: sessionData, error: sessionError } = await client
+        .from('user_sessions')
+        .select('*')
+        .eq('user_id', tokenData.user_id)
+        .eq('device_id', tokenData.device_id)
+        .single<SessionData>();
 
-    // Validate device fingerprint for additional security
-    const currentDeviceId = this.generateDeviceId(request);
-    if (tokenData.device_id && tokenData.device_id !== currentDeviceId) {
-      this.logger.warn(
-        `Device fingerprint mismatch for user ${tokenData.user_id}`,
+      if (sessionError || !sessionData) {
+        this.logger.warn('No corresponding session found for refresh token');
+        await this.revokeRefreshToken(refreshToken);
+        this.clearRefreshTokenCookie(response);
+        return null;
+      }
+
+      // Validate device fingerprint for additional security
+      const currentDeviceId = this.generateDeviceId(request);
+      if (tokenData.device_id && tokenData.device_id !== currentDeviceId) {
+        this.logger.warn(
+          `Device fingerprint mismatch for user ${tokenData.user_id}`,
+        );
+        await this.revokeRefreshToken(refreshToken);
+        this.clearRefreshTokenCookie(response);
+        return null;
+      }
+
+      // Update session activity
+      await client
+        .from('user_sessions')
+        .update({
+          last_activity: new Date().toISOString(),
+          ip_address: this.getClientIp(request),
+        })
+        .eq('id', sessionData.id);
+
+      // Generate new access token
+      const accessToken = this.generateAccessToken({
+        userId: tokenData.user_id,
+        email: sessionData.email,
+        role: sessionData.role,
+        sessionId: sessionData.id,
+      });
+
+      // Log successful token refresh event
+      await this.logSecurityEvent(
+        tokenData.user_id,
+        'token_refreshed',
+        this.getClientIp(request),
+        request.headers['user-agent'],
+        tokenData.device_id,
+        {
+          sessionId: sessionData.id,
+        },
       );
-      await this.revokeRefreshToken(refreshToken);
-      this.clearRefreshTokenCookie(response);
+
+      return { accessToken };
+    } catch (error) {
+      this.logger.error('Error during session refresh:', error);
       return null;
     }
-
-    // Update session activity
-    await client
-      .from('user_sessions')
-      .update({
-        last_activity: new Date().toISOString(),
-        ip_address: this.getClientIp(request),
-      })
-      .eq('id', tokenData.user_sessions.id);
-
-    // Generate new access token
-    const accessToken = this.generateAccessToken({
-      userId: tokenData.user_id,
-      email: tokenData.user_sessions.email,
-      role: tokenData.user_sessions.role,
-      sessionId: tokenData.user_sessions.id,
-    });
-
-    // Log successful token refresh event
-    await this.logSecurityEvent(
-      tokenData.user_id,
-      'token_refreshed',
-      this.getClientIp(request),
-      request.headers['user-agent'],
-      tokenData.device_id,
-      {
-        sessionId: tokenData.user_sessions.id,
-      },
-    );
-
-    return { accessToken };
   }
 
   /**

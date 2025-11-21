@@ -422,9 +422,6 @@ export class AuthController {
     @Res() res: express.Response,
   ): Promise<express.Response<any, Record<string, any>>> {
     const token = this.extractTokenFromHeader(req);
-
-    console.log('Logout attempt - Token provided:', !!token);
-
     if (!token) {
       res.clearCookie('refresh_token', {
         httpOnly: true,
@@ -494,7 +491,6 @@ export class AuthController {
             );
           }
         } else {
-          console.log('No userId found in token payload');
           await this.auditLoggingService.logAuthEvent(
             AuditEventType.LOGOUT,
             undefined,
@@ -536,7 +532,7 @@ export class AuthController {
     }
   }
 
-  @Post('refresh')
+  @Post('refresh-with-token')
   @ApiOperation({
     summary: 'Refresh Authentication Token',
     description: `
@@ -1321,23 +1317,16 @@ export class AuthController {
     try {
       const authHeader = request.headers.authorization;
       if (!authHeader) {
-        console.log('No authorization header found');
         return undefined;
       }
 
       const [type, token] = authHeader.split(' ');
       if (type !== 'Bearer' || !token) {
-        console.log('Invalid authorization header format:', {
-          type,
-          hasToken: !!token,
-        });
         return undefined;
       }
 
-      console.log('Token extracted successfully, length:', token.length);
       return token;
-    } catch (error) {
-      console.error('Error extracting token:', error);
+    } catch {
       return undefined;
     }
   }

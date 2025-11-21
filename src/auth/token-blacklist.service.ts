@@ -49,31 +49,17 @@ export class TokenBlacklistService implements OnModuleInit {
     userId: string,
     reason: BlacklistReason = BlacklistReason.LOGOUT,
   ): Promise<void> {
-    console.log('TokenBlacklistService.blacklistToken called:', {
-      userId,
-      reason,
-      tokenLength: token.length,
-    });
-
     try {
       // Extract expiration from token
       const decoded = this.jwtService.decode(token);
-      console.log('Token decoded:', {
-        hasDecoded: !!decoded,
-        type: typeof decoded,
-      });
 
       if (!decoded || typeof decoded !== 'object' || !decoded.exp) {
         throw new Error('Invalid token: missing expiration');
       }
 
       const expiresAt = new Date(decoded.exp * 1000);
-      console.log('Token expiration:', expiresAt.toISOString());
-
       // Create hash of token for storage (security best practice)
       const tokenHash = this.hashToken(token);
-      console.log('Token hash created, length:', tokenHash.length);
-
       const { error } = await this.supabaseService
         .getServiceClient()
         .from('blacklisted_tokens')
@@ -89,15 +75,9 @@ export class TokenBlacklistService implements OnModuleInit {
         throw new Error(`Failed to blacklist token: ${error.message}`);
       }
 
-      console.log('Token inserted into database successfully');
-
       // Add to cache
       this.tokenCache.set(tokenHash, true);
       this.cacheExpiry.set(tokenHash, expiresAt.getTime());
-
-      console.log(
-        `Token blacklisted successfully for user ${userId}, reason: ${reason}`,
-      );
     } catch (error) {
       console.error('Error in blacklistToken:', error);
       throw error;
@@ -132,10 +112,6 @@ export class TokenBlacklistService implements OnModuleInit {
 
       // Clear user's tokens from cache
       this.clearUserTokensFromCache(userId);
-
-      console.log(
-        `All tokens blacklisted for user ${userId}, reason: ${reason}`,
-      );
     } catch (error) {
       console.error('Error in blacklistAllUserTokens:', error);
       throw error;
@@ -257,8 +233,6 @@ export class TokenBlacklistService implements OnModuleInit {
 
       if (error) {
         console.error('Error cleaning up expired tokens:', error);
-      } else {
-        console.log('Cleaned up expired blacklisted tokens');
       }
 
       // Clean up cache
@@ -369,8 +343,6 @@ export class TokenBlacklistService implements OnModuleInit {
           new Date(token.expires_at).getTime(),
         );
       });
-
-      console.log(`Loaded ${data?.length || 0} recent tokens to cache`);
     } catch (error) {
       console.error('Error in loadRecentTokensToCache:', error);
     }

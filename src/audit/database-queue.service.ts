@@ -229,7 +229,6 @@ export class DatabaseQueueService implements OnModuleInit {
       .order('created_at', { ascending: false })
       .limit(50)
       .returns<DBJobResultModel[]>();
-    console.log('Get user jobs result:', { jobs, error });
 
     if (error) {
       this.logger.error('Failed to get user jobs:', error);

@@ -83,7 +83,16 @@ async function bootstrap() {
 
   // CSRF Protection Service (AFTER CORS and rate limiting)
   const csrfService = app.get(CSRFService);
-  app.use(csrfService.middleware());
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    // Skip CSRF for these endpoints
+    const skipCSRFPaths = ['/auth/refresh', '/auth/csrf-token', '/health'];
+    if (skipCSRFPaths.some((path) => req.path === path)) {
+      return next();
+    }
+
+    // Apply CSRF middleware for other routes
+    return csrfService.middleware()(req, res, next);
+  });
 
   // Enhanced validation pipes with sanitization
   app.useGlobalPipes(

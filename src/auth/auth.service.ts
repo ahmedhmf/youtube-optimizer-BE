@@ -106,6 +106,7 @@ export class AuthService {
     return {
       ...tokens,
       user,
+      expiresIn: this.getJwtExpirationTime(),
     };
   }
 
@@ -191,6 +192,7 @@ export class AuthService {
     return {
       ...tokens,
       user,
+      expiresIn: this.getJwtExpirationTime(),
     };
   }
 
@@ -214,50 +216,41 @@ export class AuthService {
       response,
     );
 
+    const jwtExpiresIn = this.getJwtExpirationTime();
+
     // Return access token only (refresh token is in HTTP-only cookie)
     return {
       accessToken: sessionData.accessToken,
       refreshToken: '', // Empty since it's in HTTP-only cookie
       user: standardResult.user,
+      expiresIn: jwtExpiresIn,
     };
   }
 
   async logout(userId: string, token?: string): Promise<{ success: boolean }> {
-    console.log('AuthService.logout called:', { userId, hasToken: !!token });
-
     try {
       // Blacklist the current token if provided
       if (token) {
-        console.log('Attempting to blacklist token for user:', userId);
         await this.tokenBlacklistService.blacklistToken(
           token,
           userId,
           BlacklistReason.LOGOUT,
         );
-        console.log('Token successfully blacklisted');
-      } else {
-        console.log('No token provided for blacklisting');
       }
 
       // Use session security service for proper cleanup
-      console.log('Cleaning up sessions for user:', userId);
       await this.sessionSecurityService.logout(userId);
-      console.log('Sessions cleaned up successfully');
 
       return { success: true };
     } catch (error) {
-      console.error('Error during logout:', error);
-
       // Try to blacklist token even if other operations fail
       if (token && !error.message?.includes('blacklist')) {
         try {
-          console.log('Fallback: Attempting to blacklist token');
           await this.tokenBlacklistService.blacklistToken(
             token,
             userId,
             BlacklistReason.LOGOUT,
           );
-          console.log('Fallback token blacklisting successful');
         } catch (blacklistError) {
           console.error('Fallback token blacklisting failed:', blacklistError);
         }
@@ -270,9 +263,11 @@ export class AuthService {
     }
   }
 
-  async refresh(
-    refreshToken: string,
-  ): Promise<{ accessToken: string; refreshToken?: string }> {
+  async refresh(refreshToken: string): Promise<{
+    accessToken: string;
+    refreshToken?: string;
+    expiresIn: number;
+  }> {
     const client = this.supabase.getClient();
 
     // Validate refresh token
@@ -313,6 +308,7 @@ export class AuthService {
     return {
       accessToken,
       refreshToken: newRefreshToken,
+      expiresIn: this.getJwtExpirationTime(),
     };
   }
 
@@ -536,6 +532,7 @@ export class AuthService {
     return {
       ...tokens,
       user,
+      expiresIn: this.getJwtExpirationTime(),
     };
   }
 
@@ -559,6 +556,7 @@ export class AuthService {
       accessToken: sessionData.accessToken,
       refreshToken: '', // Empty since it's in HTTP-only cookie
       user: standardResult.user,
+      expiresIn: this.getJwtExpirationTime(),
     };
   }
 
@@ -712,5 +710,18 @@ export class AuthService {
 
     // Default to 'email' for any invalid provider values
     return 'email';
+  }
+
+  private getJwtExpirationTime(): number {
+    // Option 1: Extract from JWT service configuration
+    // If you have JWT_EXPIRES_IN in your config
+    // const jwtConfig = this.jwtService['options']; // Access internal config
+
+    // Option 2: Hard-code based on your JWT configuration
+    return 900; // 15 minutes in seconds
+
+    // Option 3: Decode the actual token to get expiry
+    // const decoded = this.jwtService.decode(sessionData.accessToken);
+    // return decoded.exp - Math.floor(Date.now() / 1000);
   }
 }

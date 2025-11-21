@@ -502,7 +502,6 @@ export class AuditController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   async getUserJobs(@Req() req: AuthenticatedRequest) {
     try {
-      console.log(`Fetching jobs for user ${req.user.id}`);
       return await this.queueService.getUserJobs(req.user.id);
     } catch (error) {
       throw new BadRequestException(

@@ -136,24 +136,16 @@ export class TokenTestController {
   @Post('test-blacklist-direct')
   @ApiOperation({ summary: 'Test blacklisting without auth guards' })
   async testBlacklistDirect(@Body() body: { token: string; userId: string }) {
-    console.log('Direct blacklist test called:', {
-      hasToken: !!body.token,
-      hasUserId: !!body.userId,
-    });
-
     if (!body.token || !body.userId) {
       return { error: 'Token and userId are required' };
     }
 
     try {
-      console.log('Attempting to blacklist token directly...');
       await this.tokenBlacklistService.blacklistToken(
         body.token,
         body.userId,
         BlacklistReason.ADMIN_REVOKE,
       );
-
-      console.log('Direct blacklist successful');
       return {
         success: true,
         message: 'Token blacklisted successfully via direct test',
