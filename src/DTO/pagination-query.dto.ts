@@ -50,13 +50,10 @@ export class PaginationQueryDto {
   @ApiPropertyOptional({
     example: 'created_at',
     description: 'Field to sort by',
-    enum: ['created_at', 'updated_at'],
   })
   @IsOptional()
-  @IsIn(['created_at', 'updated_at'], {
-    message: 'Sort field must be either "created_at" or "updated_at"',
-  })
-  sortBy?: 'created_at' | 'updated_at' = 'created_at';
+  @IsString({ message: 'Search query must be a string' })
+  sortBy?: string;
 
   @ApiPropertyOptional({
     example: 'desc',

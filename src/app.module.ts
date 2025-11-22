@@ -13,6 +13,8 @@ import { OnboardingModule } from './common/onboarding.module';
 import { SecurityMiddleware } from './common/security.middleware';
 import { IPRateLimitMiddleware } from './common/ip-rate-limit.middleware';
 import { EnvironmentService } from './common/environment.service';
+import { AdminModule } from './admin/admin.module';
+import { ApiUsageTrackerMiddleware } from './common/middleware/api-usage-tracker.middleware';
 
 @Module({
   imports: [
@@ -32,6 +34,7 @@ import { EnvironmentService } from './common/environment.service';
       },
       inject: [EnvironmentService],
     }),
+    AdminModule,
   ],
   controllers: [AppController],
   providers: [
@@ -52,5 +55,6 @@ export class AppModule {
     consumer.apply(IPRateLimitMiddleware).forRoutes('*');
 
     consumer.apply(SecurityMiddleware).forRoutes('*');
+    consumer.apply(ApiUsageTrackerMiddleware).forRoutes('*');
   }
 }

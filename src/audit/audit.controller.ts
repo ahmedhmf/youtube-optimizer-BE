@@ -4,6 +4,7 @@ import {
   Controller,
   Delete,
   Get,
+  Logger,
   Param,
   Post,
   Query,
@@ -54,11 +55,13 @@ const ALLOWED = [
 @Controller('analyze')
 @ApiBearerAuth('access-token')
 export class AuditController {
+  private readonly logger = new Logger(AuditController.name);
+
   constructor(
     private readonly auditRepo: AuditRepository,
     private readonly supabase: SupabaseService,
     private readonly storage: SupabaseStorageService,
-    private readonly queueService: DatabaseQueueService, // Add this
+    private readonly queueService: DatabaseQueueService,
   ) {}
 
   @ApiOperation({

@@ -7,7 +7,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './jwt.strategy';
-import { AdminController } from './admin.controller';
+import { AdminController } from '../admin/admin.controller';
 import { RolesGuard } from './guards/roles.guard';
 import { SocialAuthService } from './social-auth.service';
 import { AccountLockoutService } from './account-lockout.service';
@@ -20,6 +20,7 @@ import { CSRFController } from './csrf.controller';
 import { TokenBlacklistService } from './token-blacklist.service';
 import { TokenTestController } from './token-test.controller';
 import { CommonModule } from '../common/common.module';
+import { AdminService } from '../admin/admin.service';
 
 @Module({
   imports: [
@@ -41,12 +42,7 @@ import { CommonModule } from '../common/common.module';
       inject: [ConfigService],
     }),
   ],
-  controllers: [
-    AuthController,
-    AdminController,
-    CSRFController,
-    TokenTestController,
-  ],
+  controllers: [AuthController, CSRFController, TokenTestController],
   providers: [
     AuthService,
     JwtStrategy,
@@ -58,6 +54,7 @@ import { CommonModule } from '../common/common.module';
     TokenBlacklistService,
     CSRFService,
     CSRFGuard,
+    AdminService,
   ],
   exports: [
     AuthService,
@@ -67,6 +64,7 @@ import { CommonModule } from '../common/common.module';
     AccountLockoutService,
     TokenBlacklistService,
     PassportModule,
+    AdminService,
   ],
 })
 export class AuthModule {}

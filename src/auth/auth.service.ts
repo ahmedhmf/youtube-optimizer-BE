@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   UnauthorizedException,
   BadRequestException,
   ConflictException,
@@ -33,6 +34,8 @@ import { SocialRegistration } from './types/social-registeration.type';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly supabase: SupabaseService,
     private readonly jwtService: JwtService,

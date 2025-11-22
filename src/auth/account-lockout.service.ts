@@ -270,4 +270,269 @@ export class AccountLockoutService {
   getLockoutConfig(): LockoutConfig {
     return { ...this.config };
   }
+
+  async lockAccount(
+    email: string,
+    reason: string = 'Admin action',
+  ): Promise<void> {
+    const client = this.supabaseService.getServiceClient();
+
+    try {
+      this.logger.log(`Locking account for ${email}. Reason: ${reason}`);
+
+      // Check if lockout entry exists
+      const { data: existingLockout } = await client
+        .from('account_lockouts')
+        .select('*')
+        .eq('email', email.toLowerCase())
+        .single();
+
+      const lockUntil = new Date();
+      lockUntil.setFullYear(lockUntil.getFullYear() + 100); // Lock for 100 years (effectively permanent)
+
+      if (existingLockout) {
+        // Update existing lockout
+        const { error: updateError } = await client
+          .from('account_lockouts')
+          .update({
+            lock_until: lockUntil.toISOString(),
+            attempt_count: 999, // High number to indicate manual lock
+            last_attempt_at: new Date().toISOString(),
+            is_permanently_locked: true,
+            lock_reason: reason,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('email', email.toLowerCase());
+
+        if (updateError) {
+          throw new Error(`Failed to update lockout: ${updateError.message}`);
+        }
+      } else {
+        // Create new lockout entry
+        const { error: insertError } = await client
+          .from('account_lockouts')
+          .insert({
+            email: email.toLowerCase(),
+            attempt_count: 999,
+            lock_until: lockUntil.toISOString(),
+            last_attempt_at: new Date().toISOString(),
+            is_permanently_locked: true,
+            lock_reason: reason,
+          });
+
+        if (insertError) {
+          throw new Error(`Failed to create lockout: ${insertError.message}`);
+        }
+      }
+
+      // Revoke all active sessions for this user
+      await this.revokeAllUserSessions(email);
+
+      // Log security event
+      await this.logSecurityEvent(email, 'account_locked', {
+        reason,
+        lockedBy: 'admin',
+        lockUntil: lockUntil.toISOString(),
+      });
+
+      this.logger.log(`Successfully locked account for ${email}`);
+    } catch (error) {
+      this.logger.error(`Error locking account for ${email}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Unlock an account (Admin action)
+   */
+  async unlockAccount(email: string): Promise<void> {
+    const client = this.supabaseService.getServiceClient();
+
+    try {
+      this.logger.log(`Unlocking account for ${email}`);
+
+      // Remove or update lockout entry
+      const { error: deleteError } = await client
+        .from('account_lockouts')
+        .delete()
+        .eq('email', email.toLowerCase());
+
+      if (deleteError) {
+        this.logger.warn(
+          `Failed to delete lockout entry for ${email}: ${deleteError.message}`,
+        );
+      }
+
+      // Log security event
+      await this.logSecurityEvent(email, 'account_unlocked', {
+        unlockedBy: 'admin',
+        unlockedAt: new Date().toISOString(),
+      });
+
+      this.logger.log(`Successfully unlocked account for ${email}`);
+    } catch (error) {
+      this.logger.error(`Error unlocking account for ${email}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Revoke all active sessions for a user
+   */
+  private async revokeAllUserSessions(email: string): Promise<void> {
+    const client = this.supabaseService.getServiceClient();
+
+    try {
+      // Get user profile
+      const { data: profile } = await client
+        .from('profiles')
+        .select('id')
+        .eq('email', email.toLowerCase())
+        .single();
+
+      if (!profile) {
+        this.logger.warn(`No profile found for ${email}`);
+        return;
+      }
+
+      // Delete all user sessions
+      const { error: sessionError } = await client
+        .from('user_sessions')
+        .delete()
+        .eq('user_id', profile.id);
+
+      if (sessionError) {
+        this.logger.error(
+          `Failed to delete sessions for ${email}:`,
+          sessionError,
+        );
+      }
+
+      // Revoke all refresh tokens
+      const { error: tokenError } = await client
+        .from('refresh_tokens')
+        .update({ is_revoked: true })
+        .eq('user_id', profile.id);
+
+      if (tokenError) {
+        this.logger.error(
+          `Failed to revoke refresh tokens for ${email}:`,
+          tokenError,
+        );
+      }
+
+      this.logger.log(`Revoked all sessions for ${email}`);
+    } catch (error) {
+      this.logger.error(`Error revoking sessions for ${email}:`, error);
+    }
+  }
+
+  /**
+   * Log security events
+   */
+  private async logSecurityEvent(
+    email: string,
+    eventType: string,
+    metadata: any = {},
+  ): Promise<void> {
+    const client = this.supabaseService.getServiceClient();
+
+    try {
+      await client.from('security_events').insert({
+        email: email.toLowerCase(),
+        event_type: eventType,
+        metadata,
+        created_at: new Date().toISOString(),
+      });
+    } catch (error) {
+      this.logger.error('Failed to log security event:', error);
+      // Don't throw - logging failure shouldn't break the operation
+    }
+  }
+
+  /**
+   * Get lockout status for a user
+   */
+  async getLockoutStatus(email: string): Promise<{
+    isLocked: boolean;
+    lockUntil?: Date;
+    attemptCount: number;
+    isPermanent: boolean;
+    lockReason?: string;
+  }> {
+    const client = this.supabaseService.getServiceClient();
+
+    try {
+      const { data: lockout } = await client
+        .from('account_lockouts')
+        .select('*')
+        .eq('email', email.toLowerCase())
+        .single();
+
+      if (!lockout) {
+        return {
+          isLocked: false,
+          attemptCount: 0,
+          isPermanent: false,
+        };
+      }
+
+      const lockUntil = new Date(lockout.lock_until);
+      const isLocked = lockUntil > new Date();
+
+      return {
+        isLocked: isLocked || lockout.is_permanently_locked,
+        lockUntil: isLocked ? lockUntil : undefined,
+        attemptCount: lockout.attempt_count || 0,
+        isPermanent: lockout.is_permanently_locked || false,
+        lockReason: lockout.lock_reason,
+      };
+    } catch (error) {
+      this.logger.error(`Error getting lockout status for ${email}:`, error);
+      return {
+        isLocked: false,
+        attemptCount: 0,
+        isPermanent: false,
+      };
+    }
+  }
+
+  /**
+   * Get all locked accounts (for admin panel)
+   */
+  async getAllLockedAccounts(): Promise<
+    Array<{
+      email: string;
+      lockUntil: Date;
+      attemptCount: number;
+      isPermanent: boolean;
+      lockReason?: string;
+      lastAttempt: Date;
+    }>
+  > {
+    const client = this.supabaseService.getServiceClient();
+
+    try {
+      const { data: lockouts, error } = await client
+        .from('account_lockouts')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        throw new Error(`Failed to fetch locked accounts: ${error.message}`);
+      }
+
+      return (lockouts || []).map((lockout) => ({
+        email: lockout.email,
+        lockUntil: new Date(lockout.lock_until),
+        attemptCount: lockout.attempt_count || 0,
+        isPermanent: lockout.is_permanently_locked || false,
+        lockReason: lockout.lock_reason,
+        lastAttempt: new Date(lockout.last_attempt_at),
+      }));
+    } catch (error) {
+      this.logger.error('Error fetching locked accounts:', error);
+      return [];
+    }
+  }
 }

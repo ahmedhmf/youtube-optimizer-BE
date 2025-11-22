@@ -8,6 +8,7 @@ import {
   UseGuards,
   Query,
   Post,
+  Req,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -16,6 +17,7 @@ import {
   ApiBearerAuth,
   ApiParam,
   ApiQuery,
+  ApiBody,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -24,13 +26,16 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { RequirePermissions } from '../auth/decorators/permissions.decorator';
 import { UserRole } from '../auth/types/roles.types';
 import { AuthService } from '../auth/auth.service';
-import { AccountLockoutService } from './account-lockout.service';
-import { LockoutCleanupService } from './lockout-cleanup.service';
+import { AccountLockoutService } from '../auth/account-lockout.service';
+import { LockoutCleanupService } from '../auth/lockout-cleanup.service';
 import {
   TokenBlacklistService,
   BlacklistReason,
-} from './token-blacklist.service';
+} from '../auth/token-blacklist.service';
 import { PaginationQueryDto } from '../DTO/pagination-query.dto';
+import { CSRFGuard } from '../auth/guards/csrf.guard';
+import { AdminService } from './admin.service';
+import { UpdateUserDto } from './dto/update-user-info.dto';
 
 @ApiTags('Admin Management')
 @Controller('admin')
@@ -39,6 +44,7 @@ import { PaginationQueryDto } from '../DTO/pagination-query.dto';
 @Roles(UserRole.ADMIN, UserRole.MODERATOR)
 export class AdminController {
   constructor(
+    private readonly adminService: AdminService,
     private readonly authService: AuthService,
     private readonly accountLockoutService: AccountLockoutService,
     private readonly lockoutCleanupService: LockoutCleanupService,
@@ -74,9 +80,10 @@ export class AdminController {
     },
   })
   @ApiResponse({ status: 403, description: 'Insufficient permissions' })
+  @UseGuards(JwtAuthGuard, CSRFGuard)
   getAllUsers(@Query() query: PaginationQueryDto) {
-    // Implementation would go here - get paginated users
-    return { message: 'Get all users with pagination', query };
+    console.log('AdminController.getAllUsers called with query:', query);
+    return this.adminService.getAllUsers(query);
   }
 
   @Get('users/:id')
@@ -278,6 +285,80 @@ export class AdminController {
       message: 'User account disabled and all tokens revoked',
       userId,
       timestamp: new Date().toISOString(),
+    };
+  }
+
+  @Put('users/:id')
+  @RequirePermissions('canAccessAdminPanel')
+  @ApiOperation({
+    summary: 'Update User Information',
+    description:
+      'Update user profile, role, and account status. Admin access required.',
+  })
+  @ApiParam({ name: 'id', description: 'User ID to update' })
+  @ApiBody({ type: UpdateUserDto })
+  @ApiResponse({
+    status: 200,
+    description: 'User updated successfully',
+  })
+  @ApiResponse({ status: 400, description: 'Invalid update data' })
+  @ApiResponse({ status: 403, description: 'Insufficient permissions' })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  @UseGuards(JwtAuthGuard, CSRFGuard)
+  async updateUser(
+    @Param('id') userId: string,
+    @Body() updateData: UpdateUserDto,
+    @Req() req: any,
+  ) {
+    const adminId = req.user.id;
+    const updatedUser = await this.adminService.updateUser(
+      userId,
+      updateData,
+      adminId,
+    );
+
+    return {
+      message: 'User updated successfully',
+      user: {
+        id: updatedUser.id,
+        email: updatedUser.email,
+        name: updatedUser.name,
+        role: updatedUser.role,
+        provider: updatedUser.provider,
+        createdAt: updatedUser.createdAt,
+        updatedAt: updatedUser.updatedAt,
+        status: updatedUser.accountStatus,
+        lastActivity: updatedUser.lastActivity,
+      },
+    };
+  }
+
+  @Get('users/:id/usage-overview')
+  @RequirePermissions('canAccessAdminPanel')
+  @ApiOperation({
+    summary: 'Get User Usage Overview',
+    description: `
+    Get comprehensive usage statistics for a user including:
+    - Video analysis count and limits
+    - Token usage and breakdown by feature
+    - API calls count and breakdown by endpoint
+    - Recent activities
+    - Video analysis history
+  `,
+  })
+  @ApiParam({ name: 'id', description: 'User ID' })
+  @ApiResponse({
+    status: 200,
+    description: 'Usage overview retrieved successfully',
+  })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  @UseGuards(JwtAuthGuard, CSRFGuard)
+  async getUserUsageOverview(@Param('id') userId: string) {
+    const usageOverview = await this.adminService.getUserUsageOverview(userId);
+
+    return {
+      message: 'Usage overview retrieved successfully',
+      data: usageOverview,
     };
   }
 }
