@@ -8,6 +8,7 @@ import {
 import express from 'express';
 import { JwtService } from '@nestjs/jwt';
 import { SupabaseService } from '../supabase/supabase.service';
+import { LogAggregatorService } from '../logging/services/log-aggregator.service';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
 import {
@@ -43,12 +44,12 @@ export class AuthService {
     private readonly accountLockoutService: AccountLockoutService,
     private readonly sessionSecurityService: SessionSecurityService,
     private readonly tokenBlacklistService: TokenBlacklistService,
+    private readonly logAggregatorService: LogAggregatorService,
   ) {}
 
   async register(registerDto: RegisterDto): Promise<AuthResponse> {
     const { email, password, name } = registerDto;
     const client = this.supabase.getClient();
-    // Check if user already exists
     const { data: existingUser, error: checkError } = await client
       .from('profiles')
       .select('id')
@@ -103,7 +104,6 @@ export class AuthService {
 
     const tokens = await this.generateTokens(user.id);
 
-    // Store refresh token
     await this.storeRefreshToken(user.id, tokens.refreshToken);
 
     return {
@@ -232,7 +232,6 @@ export class AuthService {
 
   async logout(userId: string, token?: string): Promise<{ success: boolean }> {
     try {
-      // Blacklist the current token if provided
       if (token) {
         await this.tokenBlacklistService.blacklistToken(
           token,
@@ -246,8 +245,10 @@ export class AuthService {
 
       return { success: true };
     } catch (error) {
-      // Try to blacklist token even if other operations fail
-      if (token && !error.message?.includes('blacklist')) {
+      if (
+        token &&
+        !(error instanceof Error ? error.message?.includes('blacklist') : false)
+      ) {
         try {
           await this.tokenBlacklistService.blacklistToken(
             token,
@@ -343,16 +344,36 @@ export class AuthService {
     };
   }
 
-  async updateProfile(userId: string, updates: Partial<User>): Promise<User> {
+  async updateProfile(
+    userId: string,
+    updates: Partial<User>,
+    ipAddress?: string,
+    userAgent?: string,
+  ): Promise<User> {
     const client = this.supabase.getClient();
+
+    // Get old profile data for audit trail
+    const { data: oldProfile } = await client
+      .from('profiles')
+      .select('*')
+      .eq('id', userId)
+      .single<Profile>();
 
     const allowedUpdates = ['name'];
     const filteredUpdates: any = {};
+    const oldValues: any = {};
+    const newValues: any = {};
+    const changes: string[] = [];
 
     Object.keys(updates).forEach((key: keyof User) => {
       if (allowedUpdates.includes(key)) {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         filteredUpdates[key] = updates[key];
+        if (oldProfile && oldProfile[key] !== updates[key]) {
+          oldValues[key] = oldProfile[key];
+          newValues[key] = updates[key];
+          changes.push(key);
+        }
       }
     });
 
@@ -368,6 +389,27 @@ export class AuthService {
 
     if (error || !profile) {
       throw new BadRequestException('Failed to update profile');
+    }
+
+    // Log audit trail if there are changes
+    if (changes.length > 0) {
+      await this.logAggregatorService.logAuditTrail({
+        actorId: userId,
+        actorEmail: profile.email,
+        actorRole: profile.role || 'user',
+        action: 'update_own_profile',
+        entityType: 'user_profile',
+        entityId: userId,
+        oldValues,
+        newValues,
+        changes,
+        ipAddress: ipAddress || 'unknown',
+        userAgent: userAgent || 'unknown',
+        metadata: {
+          selfService: true,
+          updatedAt: new Date().toISOString(),
+        },
+      });
     }
 
     return {
@@ -539,6 +581,121 @@ export class AuthService {
     };
   }
 
+  /**
+   * Handle Google OAuth callback - exchange code for user info and create session
+   */
+  async handleGoogleCallback(
+    code: string,
+    req: express.Request,
+    res: express.Response,
+  ): Promise<AuthResponse> {
+    // Exchange authorization code for user info
+    const socialUserInfo =
+      await this.socialAuthService.exchangeGoogleCode(code);
+
+    const client = this.supabase.getClient();
+    const { data: existingUser } = await client
+      .from('profiles')
+      .select('*')
+      .eq('email', socialUserInfo.email)
+      .single<Profile>();
+
+    let user: User;
+
+    if (existingUser) {
+      // Update existing user
+      const updateData: SocialRegistration = {
+        name: existingUser.name || socialUserInfo.name,
+        picture: socialUserInfo.picture,
+        updated_at: new Date().toISOString(),
+      };
+
+      if (existingUser.provider === 'email' || !existingUser.password_hash) {
+        updateData.provider = socialUserInfo.provider;
+      }
+
+      const { data: updatedProfile, error: updateError } = await client
+        .from('profiles')
+        .update(updateData)
+        .eq('id', existingUser.id)
+        .select()
+        .single<Profile>();
+
+      if (updateError) {
+        throw new BadRequestException(
+          `Failed to update user profile: ${updateError.message}`,
+        );
+      }
+
+      user = {
+        id: updatedProfile.id,
+        email: updatedProfile.email,
+        name: updatedProfile.name ?? socialUserInfo.name,
+        role: this.getUserRoleFromString(updatedProfile.role),
+        picture: updatedProfile.picture ?? socialUserInfo.picture,
+        provider: this.getValidProvider(updatedProfile.provider),
+        createdAt: new Date(updatedProfile.created_at ?? ''),
+        updatedAt: new Date(updatedProfile.updated_at ?? ''),
+      };
+    } else {
+      // Create new user
+      const userId = crypto.randomUUID();
+      const placeholderPasswordHash = await bcrypt.hash(
+        `social-login-${userId}-${Date.now()}`,
+        12,
+      );
+
+      const { data: newProfile, error: createError } = await client
+        .from('profiles')
+        .insert({
+          id: userId,
+          email: socialUserInfo.email,
+          name: socialUserInfo.name,
+          role: UserRole.USER,
+          picture: socialUserInfo.picture,
+          provider: socialUserInfo.provider,
+          password_hash: placeholderPasswordHash,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .select()
+        .single<Profile>();
+
+      if (createError) {
+        throw new BadRequestException(
+          `Failed to create user profile: ${createError.message}`,
+        );
+      }
+
+      user = {
+        id: newProfile.id,
+        email: newProfile.email,
+        name: newProfile.name ?? socialUserInfo.name,
+        role: this.getUserRoleFromString(newProfile.role),
+        picture: newProfile.picture ?? socialUserInfo.picture,
+        provider: this.getValidProvider(newProfile.provider),
+        createdAt: new Date(newProfile.created_at ?? ''),
+        updatedAt: new Date(newProfile.updated_at ?? ''),
+      };
+    }
+
+    // Create secure session with session security service
+    const sessionData = await this.sessionSecurityService.createSecureSession(
+      user.id,
+      user.email,
+      user.role,
+      req,
+      res,
+    );
+
+    return {
+      accessToken: sessionData.accessToken,
+      refreshToken: '', // Empty since it's in HTTP-only cookie
+      user,
+      expiresIn: this.getJwtExpirationTime(),
+    };
+  }
+
   async socialLoginWithSession(
     socialLoginDto: SocialLoginDto,
     request: any,
@@ -602,6 +759,8 @@ export class AuthService {
    */
   async resetPassword(
     resetPasswordDto: ResetPasswordDto,
+    ipAddress?: string,
+    userAgent?: string,
   ): Promise<{ message: string }> {
     const { token, newPassword } = resetPasswordDto;
     const client = this.supabase.getClient();
@@ -619,6 +778,13 @@ export class AuthService {
       if (sessionError || !user) {
         throw new UnauthorizedException('Invalid or expired reset token');
       }
+
+      // Get user profile for audit trail
+      const { data: profile } = await client
+        .from('profiles')
+        .select('email, role')
+        .eq('id', user.id)
+        .single();
 
       // Update the user's password using Supabase Auth
       const { error: updateError } = await client.auth.updateUser({
@@ -639,6 +805,31 @@ export class AuthService {
 
       // Also invalidate refresh tokens
       await this.invalidateAllUserTokens(user.id);
+
+      // Log audit trail
+      await this.logAggregatorService.logAuditTrail({
+        actorId: user.id,
+        actorEmail: profile?.email || user.email || 'unknown',
+        actorRole: profile?.role || 'user',
+        action: 'reset_password',
+        entityType: 'user_credentials',
+        entityId: user.id,
+        oldValues: {
+          passwordSet: true,
+        },
+        newValues: {
+          passwordReset: true,
+          resetAt: new Date().toISOString(),
+          allTokensRevoked: true,
+        },
+        changes: ['password', 'tokens_revoked'],
+        ipAddress: ipAddress || 'unknown',
+        userAgent: userAgent || 'unknown',
+        metadata: {
+          resetMethod: 'email_token',
+          securityAction: 'all_sessions_terminated',
+        },
+      });
 
       return { message: 'Password reset successfully' };
     } catch (error) {

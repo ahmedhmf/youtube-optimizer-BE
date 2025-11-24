@@ -19,7 +19,7 @@ import {
 } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { OnboardingService } from '../common/onboarding.service';
+import { OnboardingService } from './onboarding.service';
 import {
   OnboardingStep,
   StartOnboardingDto,
@@ -27,7 +27,8 @@ import {
   CompleteFirstAnalysisDto,
   UpdatePreferencesDto,
   OnboardingProgressResponse,
-} from '../DTO/onboarding.dto';
+} from './dto/onboarding.dto';
+import type { AuthenticatedRequest } from 'src/audit/models/authenticated-request.model';
 
 @ApiTags('Onboarding')
 @Controller('onboarding')
@@ -54,9 +55,9 @@ export class OnboardingController {
   })
   async startOnboarding(
     @Body() startOnboardingDto: StartOnboardingDto,
-    @Req() req: Request,
+    @Req() req: AuthenticatedRequest,
   ): Promise<OnboardingProgressResponse> {
-    const userId = (req.user as any)?.id as string;
+    const userId = req.user.id;
     const ipAddress = req.ip || 'unknown';
 
     this.logger.log(`Starting onboarding for user: ${userId}`);
@@ -84,9 +85,9 @@ export class OnboardingController {
   })
   async updateUserType(
     @Body() updateUserTypeDto: UpdateUserTypeDto,
-    @Req() req: Request,
+    @Req() req: AuthenticatedRequest,
   ): Promise<OnboardingProgressResponse> {
-    const userId = (req.user as any)?.id as string;
+    const userId = req.user.id;
     const ipAddress = req.ip || 'unknown';
 
     this.logger.log(`Updating user type for user: ${userId}`);
@@ -114,9 +115,9 @@ export class OnboardingController {
   })
   async completeFirstAnalysis(
     @Body() completeFirstAnalysisDto: CompleteFirstAnalysisDto,
-    @Req() req: Request,
+    @Req() req: AuthenticatedRequest,
   ): Promise<OnboardingProgressResponse> {
-    const userId = (req.user as any)?.id as string;
+    const userId = req.user.id;
     const ipAddress = req.ip || 'unknown';
 
     this.logger.log(`Completing first analysis for user: ${userId}`);
@@ -144,9 +145,9 @@ export class OnboardingController {
   })
   async updatePreferences(
     @Body() updatePreferencesDto: UpdatePreferencesDto,
-    @Req() req: Request,
+    @Req() req: AuthenticatedRequest,
   ): Promise<OnboardingProgressResponse> {
-    const userId = (req.user as any)?.id as string;
+    const userId = req.user.id;
     const ipAddress = req.ip || 'unknown';
 
     this.logger.log(`Updating preferences for user: ${userId}`);
@@ -183,9 +184,9 @@ export class OnboardingController {
   })
   async skipStep(
     @Param('step') step: OnboardingStep,
-    @Req() req: Request,
+    @Req() req: AuthenticatedRequest,
   ): Promise<OnboardingProgressResponse> {
-    const userId = (req.user as any)?.id as string;
+    const userId = req.user.id;
     const ipAddress = req.ip || 'unknown';
 
     this.logger.log(`Skipping step ${step} for user: ${userId}`);
@@ -211,8 +212,10 @@ export class OnboardingController {
     status: HttpStatus.NOT_FOUND,
     description: 'Onboarding progress not found',
   })
-  async getProgress(@Req() req: Request): Promise<OnboardingProgressResponse> {
-    const userId = (req.user as any)?.id as string;
+  async getProgress(
+    @Req() req: AuthenticatedRequest,
+  ): Promise<OnboardingProgressResponse> {
+    const userId = req.user.id;
 
     this.logger.log(`Getting onboarding progress for user: ${userId}`);
 
@@ -234,9 +237,9 @@ export class OnboardingController {
     description: 'User not authenticated',
   })
   async completeOnboarding(
-    @Req() req: Request,
+    @Req() req: AuthenticatedRequest,
   ): Promise<OnboardingProgressResponse> {
-    const userId = (req.user as any)?.id as string;
+    const userId = req.user.id;
     const ipAddress = req.ip || 'unknown';
 
     this.logger.log(`Completing onboarding for user: ${userId}`);

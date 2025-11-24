@@ -20,6 +20,39 @@ export class SessionSecurityService {
   ) {}
 
   /**
+   * Get session details for audit trail
+   */
+  async getSessionDetails(sessionId: string): Promise<{
+    deviceInfo: string;
+    lastActivity: string;
+  } | null> {
+    try {
+      const client = this.supabase.getServiceClient();
+
+      const { data: session, error } = await client
+        .from('user_sessions')
+        .select('device_info, last_activity')
+        .eq('session_id', sessionId)
+        .single();
+
+      if (error || !session) {
+        return null;
+      }
+
+      return {
+        deviceInfo: session.device_info,
+        lastActivity: session.last_activity,
+      };
+    } catch (error) {
+      this.logger.error(
+        `Failed to get session details: ${error.message}`,
+        error.stack,
+      );
+      return null;
+    }
+  }
+
+  /**
    * Create secure session with refresh token stored in HTTP-only cookie
    */
   async createSecureSession(

@@ -48,4 +48,73 @@ export class SocialAuthService {
       throw new BadRequestException('Invalid Google token');
     }
   }
+
+  /**
+   * Exchange Google authorization code for access token and user info
+   */
+  async exchangeGoogleCode(code: string): Promise<SocialUserInfo> {
+    try {
+      const clientId = this.configService.get<string>('GOOGLE_CLIENT_ID');
+      const clientSecret =
+        this.configService.get<string>('GOOGLE_CLIENT_SECRET');
+      const redirectUri =
+        this.configService.get<string>('GOOGLE_REDIRECT_URI') ||
+        `${this.configService.get<string>('BACKEND_URL')}/auth/social/google`;
+
+      // 1. Exchange authorization code for tokens
+      const tokenResponse = await firstValueFrom(
+        this.httpService.post<{
+          access_token: string;
+          expires_in: number;
+          refresh_token?: string;
+          scope: string;
+          token_type: string;
+          id_token?: string;
+        }>('https://oauth2.googleapis.com/token', {
+          code,
+          client_id: clientId,
+          client_secret: clientSecret,
+          redirect_uri: redirectUri,
+          grant_type: 'authorization_code',
+        }),
+      );
+
+      const { access_token } = tokenResponse.data;
+
+      // 2. Get user info from Google
+      const userInfoResponse = await firstValueFrom(
+        this.httpService.get<{
+          id: string;
+          email: string;
+          verified_email: boolean;
+          name: string;
+          given_name?: string;
+          family_name?: string;
+          picture?: string;
+          locale?: string;
+        }>('https://www.googleapis.com/oauth2/v2/userinfo', {
+          headers: { Authorization: `Bearer ${access_token}` },
+        }),
+      );
+
+      const userInfo = userInfoResponse.data;
+
+      // Verify email is verified
+      if (!userInfo.verified_email) {
+        throw new BadRequestException('Google email not verified');
+      }
+
+      return {
+        id: userInfo.id,
+        email: userInfo.email,
+        name: userInfo.name,
+        picture: userInfo.picture,
+        provider: SocialProvider.GOOGLE,
+      };
+    } catch (error) {
+      throw new BadRequestException(
+        `Failed to exchange Google code: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
 }

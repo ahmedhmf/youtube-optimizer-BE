@@ -1,6 +1,7 @@
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { SupabaseService } from 'src/supabase/supabase.service';
 import { AccountLockoutService } from '../auth/account-lockout.service';
+import { LogAggregatorService } from '../logging/services/log-aggregator.service';
 import { SocialProvider } from '../auth/dto';
 import { UserRole } from '../auth/types/roles.types';
 import {
@@ -18,6 +19,7 @@ export class AdminService {
   constructor(
     private readonly supabase: SupabaseService,
     private readonly accountLockoutService: AccountLockoutService,
+    private readonly logAggregatorService: LogAggregatorService,
   ) {}
 
   /**
@@ -223,12 +225,85 @@ export class AdminService {
   }
 
   /**
+   * Get user by ID (Admin only)
+   */
+  public async getUserById(userId: string): Promise<AllUserInformation> {
+    try {
+      const users = await this.getAllUsers({
+        page: 1,
+        limit: 1,
+        search: userId,
+      });
+
+      const client = this.supabase.getServiceClient();
+      const { data: profile } = await client
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .single();
+
+      if (!profile) {
+        throw new Error('User not found');
+      }
+
+      // Get subscription data
+      const { data: subscription } = await client
+        .from('user_subscriptions')
+        .select('tier, status, current_period_end')
+        .eq('user_id', userId)
+        .eq('status', 'active')
+        .single();
+
+      // Get onboarding data
+      const { data: onboarding } = await client
+        .from('user_onboarding')
+        .select('current_step, progress_percentage, completed_at')
+        .eq('user_id', userId)
+        .single();
+
+      return {
+        id: profile.id,
+        email: profile.email || '',
+        name: profile.name || '',
+        role: this.getUserRoleFromString(profile.role),
+        provider: this.getValidProvider(profile.provider),
+        accountStatus: profile.account_status || 'active',
+        lastActivity: profile.last_activity
+          ? new Date(profile.last_activity)
+          : undefined,
+        subscription: subscription
+          ? {
+              tier: subscription.tier,
+              status: subscription.status,
+              currentPeriodEnd: new Date(subscription.current_period_end),
+            }
+          : undefined,
+        onboarding: onboarding
+          ? {
+              currentStep: onboarding.current_step,
+              progressPercentage: onboarding.progress_percentage || 0,
+              completedAt: onboarding.completed_at ? new Date(onboarding.completed_at) : undefined,
+            }
+          : undefined,
+        picture: profile.picture,
+        createdAt: new Date(profile.created_at ?? ''),
+        updatedAt: new Date(profile.updated_at ?? ''),
+      };
+    } catch (error) {
+      this.logger.error(`Error fetching user ${userId}:`, error);
+      throw new Error(`Failed to fetch user: ${error.message}`);
+    }
+  }
+
+  /**
    * Update user profile information (Admin only)
    */
   public async updateUser(
     userId: string,
     updateData: UpdateUserDto,
     adminId: string,
+    ipAddress?: string,
+    userAgent?: string,
   ): Promise<AllUserInformation> {
     const client = this.supabase.getServiceClient();
 
@@ -238,7 +313,7 @@ export class AdminService {
         updateData,
       );
 
-      // Check if user exists
+      // Check if user exists and get current state
       const { data: existingUser, error: fetchError } = await client
         .from('profiles')
         .select('*')
@@ -249,12 +324,24 @@ export class AdminService {
         throw new Error('User not found');
       }
 
+      // Get admin info for audit trail
+      const { data: adminProfile } = await client
+        .from('profiles')
+        .select('email, role')
+        .eq('id', adminId)
+        .single();
+
+      // Capture old values for audit trail
+      const oldValues: any = {};
+      const newValues: any = {};
+      const changes: string[] = [];
+
       // Prepare update data (only include fields that are provided)
       const profileUpdates: any = {
         updated_at: new Date().toISOString(),
       };
 
-      if (updateData.email !== undefined) {
+      if (updateData.email !== undefined && updateData.email !== existingUser.email) {
         // Check if email is already taken by another user
         const { data: emailCheck } = await client
           .from('profiles')
@@ -267,18 +354,30 @@ export class AdminService {
           throw new Error('Email is already in use by another user');
         }
         profileUpdates.email = updateData.email;
+        oldValues.email = existingUser.email;
+        newValues.email = updateData.email;
+        changes.push('email');
       }
 
-      if (updateData.name !== undefined) {
+      if (updateData.name !== undefined && updateData.name !== existingUser.name) {
         profileUpdates.name = updateData.name;
+        oldValues.name = existingUser.name;
+        newValues.name = updateData.name;
+        changes.push('name');
       }
 
-      if (updateData.role !== undefined) {
+      if (updateData.role !== undefined && updateData.role !== existingUser.role) {
         profileUpdates.role = updateData.role;
+        oldValues.role = existingUser.role;
+        newValues.role = updateData.role;
+        changes.push('role');
       }
 
-      if (updateData.picture !== undefined) {
+      if (updateData.picture !== undefined && updateData.picture !== existingUser.picture) {
         profileUpdates.picture = updateData.picture;
+        oldValues.picture = existingUser.picture;
+        newValues.picture = updateData.picture;
+        changes.push('picture');
       }
 
       // Update profile
@@ -294,7 +393,11 @@ export class AdminService {
       }
 
       // Handle account status changes
-      if (updateData.accountStatus !== undefined) {
+      if (updateData.accountStatus !== undefined && updateData.accountStatus !== existingUser.account_status) {
+        oldValues.accountStatus = existingUser.account_status;
+        newValues.accountStatus = updateData.accountStatus;
+        changes.push('account_status');
+
         if (updateData.accountStatus === 'locked') {
           await this.accountLockoutService.lockAccount(
             existingUser.email,
@@ -305,7 +408,7 @@ export class AdminService {
         }
       }
 
-      // Log admin action
+      // Log admin action to old admin_audit_log table
       await this.logAdminAction(adminId, 'update_user', userId, {
         updates: updateData,
         previousData: {
@@ -314,6 +417,29 @@ export class AdminService {
           role: existingUser.role,
         },
       });
+
+      // Log to audit trail if there are actual changes
+      if (changes.length > 0) {
+        await this.logAggregatorService.logAuditTrail({
+          actorId: adminId,
+          actorEmail: adminProfile?.email || 'unknown',
+          actorRole: adminProfile?.role || 'unknown',
+          action: 'update_user_profile',
+          entityType: 'user',
+          entityId: userId,
+          oldValues,
+          newValues,
+          changes,
+          ipAddress: ipAddress || 'unknown',
+          userAgent: userAgent || 'unknown',
+          metadata: {
+            targetUserEmail: existingUser.email,
+            targetUserName: existingUser.name,
+            updatedBy: adminId,
+            updateTimestamp: new Date().toISOString(),
+          },
+        });
+      }
 
       // Return updated user with full information
       const users = await this.getAllUsers({

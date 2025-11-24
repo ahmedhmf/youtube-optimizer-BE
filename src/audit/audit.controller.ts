@@ -41,6 +41,11 @@ import { PaginationQueryDto } from 'src/DTO/pagination-query.dto';
 import { DatabaseQueueService } from './database-queue.service';
 import { PaginatedResponse } from 'src/auth/types/paginated-responce.model';
 import type { AuthenticatedRequest } from './models/authenticated-request.model';
+import { UserLogService } from '../logging/services/user-log.service';
+import { LogAggregatorService } from '../logging/services/log-aggregator.service';
+import { LogSeverity, LogType } from '../logging/dto/log.types';
+import { VideoAnalysisLogService } from '../logging/services/video-analysis-log.servce';
+import { VideoAnalysisStatus } from '../logging/dto/log.types';
 
 const ALLOWED = [
   'video/mp4',
@@ -62,6 +67,9 @@ export class AuditController {
     private readonly supabase: SupabaseService,
     private readonly storage: SupabaseStorageService,
     private readonly queueService: DatabaseQueueService,
+    private readonly userLogService: UserLogService,
+    private readonly logAggregatorService: LogAggregatorService,
+    private readonly videoAnalysisLogService: VideoAnalysisLogService,
   ) {}
 
   @ApiOperation({
@@ -147,6 +155,39 @@ export class AuditController {
         jobId,
         type: 'youtube',
         configuration: body.configuration,
+      });
+
+      // Log video analysis request
+      await this.userLogService.logActivity({
+        userId,
+        logType: LogType.ACTIVITY,
+        activityType: 'video_analysis_requested',
+        description: `User requested YouTube video analysis`,
+        severity: LogSeverity.INFO,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'] || 'unknown',
+        metadata: {
+          jobId: queueJobId,
+          videoUrl: (body.configuration as any).videoUrl,
+          analysisType: (body.configuration as any).analysisType || 'standard',
+        },
+      });
+
+      // Create video analysis log
+      await this.videoAnalysisLogService.createLog({
+        userId,
+        videoId: queueJobId,
+        videoUrl: (body.configuration as any).videoUrl || 'unknown',
+        videoTitle: (body.configuration as any).videoTitle || 'YouTube Video',
+        analysisType: (body.configuration as any).analysisType || 'standard',
+        status: VideoAnalysisStatus.INITIATED,
+        stage: 'queued',
+        progressPercentage: 0,
+        metadata: {
+          jobId: queueJobId,
+          queuedAt: new Date().toISOString(),
+          configuration: body.configuration,
+        },
       });
 
       return {
@@ -249,6 +290,42 @@ export class AuditController {
         accessToken,
       });
 
+      // Log video upload analysis request
+      await this.userLogService.logActivity({
+        userId,
+        logType: LogType.ACTIVITY,
+        activityType: 'video_upload_analysis_requested',
+        description: `User uploaded video for analysis: ${file.originalname}`,
+        severity: LogSeverity.INFO,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'] || 'unknown',
+        metadata: {
+          jobId: queueJobId,
+          fileName: file.originalname,
+          fileSize: file.size,
+          mimeType: file.mimetype,
+        },
+      });
+
+      // Create video analysis log for upload
+      await this.videoAnalysisLogService.createLog({
+        userId,
+        videoId: queueJobId,
+        videoUrl: `upload://${file.originalname}`,
+        videoTitle: file.originalname,
+        analysisType: 'upload',
+        status: VideoAnalysisStatus.INITIATED,
+        stage: 'upload_queued',
+        progressPercentage: 0,
+        metadata: {
+          jobId: queueJobId,
+          fileName: file.originalname,
+          fileSize: file.size,
+          mimeType: file.mimetype,
+          queuedAt: new Date().toISOString(),
+        },
+      });
+
       return {
         jobId: queueJobId,
         message:
@@ -336,6 +413,40 @@ export class AuditController {
         type: 'transcript',
         transcript: body.transcript,
         configuration: body.configuration,
+      });
+
+      // Log transcript analysis request
+      await this.userLogService.logActivity({
+        userId,
+        logType: LogType.ACTIVITY,
+        activityType: 'transcript_analysis_requested',
+        description: 'User submitted transcript for analysis',
+        severity: LogSeverity.INFO,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'] || 'unknown',
+        metadata: {
+          jobId: queueJobId,
+          transcriptLength: body.transcript.length,
+          analysisType: (body.configuration as any).analysisType || 'standard',
+        },
+      });
+
+      // Create video analysis log for transcript
+      await this.videoAnalysisLogService.createLog({
+        userId,
+        videoId: queueJobId,
+        videoUrl: 'transcript://direct',
+        videoTitle: 'Transcript Analysis',
+        analysisType: (body.configuration as any).analysisType || 'transcript',
+        status: VideoAnalysisStatus.INITIATED,
+        stage: 'transcript_queued',
+        progressPercentage: 0,
+        metadata: {
+          jobId: queueJobId,
+          transcriptLength: body.transcript.length,
+          queuedAt: new Date().toISOString(),
+          configuration: body.configuration,
+        },
       });
 
       return {
@@ -460,6 +571,24 @@ export class AuditController {
       }
 
       const cancelled = await this.queueService.cancelJob(jobId);
+
+      if (cancelled) {
+        // Log job cancellation
+        await this.userLogService.logActivity({
+          userId: req.user.id,
+          logType: LogType.ACTIVITY,
+          activityType: 'job_cancelled',
+          description: 'User cancelled an analysis job',
+          severity: LogSeverity.INFO,
+          ipAddress: req.ip,
+          userAgent: req.headers['user-agent'] || 'unknown',
+          metadata: {
+            jobId,
+            jobType: job.data?.type,
+          },
+        });
+      }
+
       return {
         cancelled,
         message: cancelled
@@ -565,6 +694,23 @@ export class AuditController {
       }
 
       const newJobId = await this.queueService.retryJob(jobId);
+
+      // Log job retry
+      await this.userLogService.logActivity({
+        userId: req.user.id,
+        logType: LogType.ACTIVITY,
+        activityType: 'job_retried',
+        description: 'User retried a failed analysis job',
+        severity: LogSeverity.INFO,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'] || 'unknown',
+        metadata: {
+          originalJobId: jobId,
+          newJobId,
+          previousStatus: job.status,
+          jobType: job.data?.type,
+        },
+      });
 
       return {
         success: true,
@@ -754,6 +900,12 @@ export class AuditController {
       // Delete the audit and get thumbnail info
       const deletedAudit = await this.auditRepo.deleteAudit(auditId, userId);
 
+      // Capture snapshot for audit trail
+      const auditSnapshot = {
+        id: deletedAudit.id,
+        thumbnailUrl: deletedAudit.thumbnail_url,
+      };
+
       // If there's a thumbnail, delete it from storage
       if (deletedAudit.thumbnail_url) {
         try {
@@ -771,6 +923,44 @@ export class AuditController {
           );
         }
       }
+
+      // Log audit deletion
+      await this.userLogService.logActivity({
+        userId,
+        logType: LogType.ACTIVITY,
+        activityType: 'analysis_deleted',
+        description: 'User deleted an analysis record',
+        severity: LogSeverity.INFO,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'] || 'unknown',
+        metadata: {
+          auditId: deletedAudit.id,
+          hadThumbnail: !!deletedAudit.thumbnail_url,
+        },
+      });
+
+      // Audit trail for data deletion
+      await this.logAggregatorService.logAuditTrail({
+        actorId: userId,
+        actorEmail: req.user?.email || 'unknown',
+        actorRole: req.user?.role || 'user',
+        action: 'delete_analysis',
+        entityType: 'video_analysis',
+        entityId: deletedAudit.id,
+        oldValues: auditSnapshot,
+        newValues: {
+          deleted: true,
+          deletedAt: new Date().toISOString(),
+        },
+        changes: ['analysis_deleted'],
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'] || 'unknown',
+        metadata: {
+          auditId: deletedAudit.id,
+          hadThumbnail: !!deletedAudit.thumbnail_url,
+          thumbnailDeleted: !!deletedAudit.thumbnail_url,
+        },
+      });
 
       return {
         success: true,

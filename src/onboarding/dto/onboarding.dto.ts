@@ -55,6 +55,8 @@ export class StartOnboardingDto {
   @IsOptional()
   @IsString()
   channelName?: string;
+  contentType: any;
+  goals: any;
 }
 
 export class UpdateUserTypeDto {

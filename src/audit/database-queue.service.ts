@@ -13,6 +13,13 @@ import { VideoAnalysisJob } from './models/video-analysis-job.model';
 import { DBJobResultModel } from './models/db-job-result.model';
 import { AuditResponse } from './models/audit.types';
 import { FilgeDataModel } from './models/file-data.model';
+import { VideoAnalysisLogService } from '../logging/services/video-analysis-log.servce';
+import {
+  VideoAnalysisStatus,
+  LogSeverity,
+  SystemLogCategory,
+} from '../logging/dto/log.types';
+import { SystemLogService } from '../logging/services/system-log.service';
 
 @Injectable()
 export class DatabaseQueueService implements OnModuleInit {
@@ -28,6 +35,8 @@ export class DatabaseQueueService implements OnModuleInit {
     private readonly aiService: AiService,
     private readonly auditRepo: AuditRepository,
     private readonly storage: SupabaseStorageService,
+    private readonly videoAnalysisLogService: VideoAnalysisLogService,
+    private readonly systemLogService: SystemLogService,
   ) {}
 
   onModuleInit() {
@@ -254,6 +263,7 @@ export class DatabaseQueueService implements OnModuleInit {
     }
 
     this.isProcessing = true;
+    const startTime = Date.now();
 
     try {
       const client = this.supabase.getClient();
@@ -269,7 +279,34 @@ export class DatabaseQueueService implements OnModuleInit {
 
       if (error) {
         this.logger.error('Failed to fetch pending jobs:', error);
+        await this.systemLogService.logSystem({
+          logLevel: LogSeverity.ERROR,
+          category: SystemLogCategory.QUEUE,
+          serviceName: 'DatabaseQueueService',
+          message: 'Failed to fetch pending jobs from queue',
+          details: {
+            error: error.message,
+            activeJobs: this.activeJobs.size,
+          },
+          stackTrace: error instanceof Error ? error.stack : undefined,
+        });
         return;
+      }
+
+      // Log queue metrics
+      const queueDepth = pendingJobs?.length || 0;
+      if (queueDepth > 20) {
+        await this.systemLogService.logSystem({
+          logLevel: LogSeverity.WARNING,
+          category: SystemLogCategory.QUEUE,
+          serviceName: 'DatabaseQueueService',
+          message: 'High queue depth detected',
+          details: {
+            queueDepth,
+            activeJobs: this.activeJobs.size,
+            maxConcurrent: this.MAX_CONCURRENT_JOBS,
+          },
+        });
       }
 
       if (!pendingJobs || pendingJobs.length === 0) {
@@ -454,6 +491,17 @@ export class DatabaseQueueService implements OnModuleInit {
 
       this.logger.log(`Processing job ${jobId} of type ${job.job_type}`);
 
+      // Update video analysis log to PROCESSING
+      try {
+        await this.videoAnalysisLogService.updateLogByVideoId(jobId, {
+          status: VideoAnalysisStatus.PROCESSING,
+          stage: 'processing',
+          progressPercentage: 10,
+        });
+      } catch (logError) {
+        this.logger.warn(`Failed to update video analysis log: ${logError}`);
+      }
+
       const payload = job.payload;
 
       // Convert base64 buffer back to Buffer
@@ -557,6 +605,19 @@ export class DatabaseQueueService implements OnModuleInit {
         .eq('id', jobId);
 
       this.logger.log(`Job ${jobId} completed successfully`);
+
+      // Update video analysis log to COMPLETED
+      try {
+        await this.videoAnalysisLogService.updateLogByVideoId(jobId, {
+          status: VideoAnalysisStatus.COMPLETED,
+          stage: 'completed',
+          progressPercentage: 100,
+          auditId: savedAudit.data.id,
+          results: result,
+        });
+      } catch (logError) {
+        this.logger.warn(`Failed to update video analysis log: ${logError}`);
+      }
     } catch (error) {
       this.logger.error(`Job ${jobId} failed:`, error);
 
@@ -569,6 +630,18 @@ export class DatabaseQueueService implements OnModuleInit {
           completed_at: new Date().toISOString(),
         })
         .eq('id', jobId);
+
+      // Update video analysis log to FAILED
+      try {
+        await this.videoAnalysisLogService.updateLogByVideoId(jobId, {
+          status: VideoAnalysisStatus.FAILED,
+          stage: 'failed',
+          errorMessage: error instanceof Error ? error.message : String(error),
+          errorCode: error instanceof Error ? error.name : 'UNKNOWN_ERROR',
+        });
+      } catch (logError) {
+        this.logger.warn(`Failed to update video analysis log: ${logError}`);
+      }
     }
   }
 
@@ -709,40 +782,108 @@ export class DatabaseQueueService implements OnModuleInit {
   // Change the cleanup to run more frequently and clean up completed jobs sooner
   @Cron(CronExpression.EVERY_HOUR) // Run every hour instead of daily
   async cleanupOldJobs() {
+    const startTime = Date.now();
     const client = this.supabase.getClient();
 
-    // Clean up completed jobs older than 1 hour (instead of 7 days)
-    const oneHourAgo = new Date();
-    oneHourAgo.setHours(oneHourAgo.getHours() - 1);
+    try {
+      // Clean up completed jobs older than 1 hour (instead of 7 days)
+      const oneHourAgo = new Date();
+      oneHourAgo.setHours(oneHourAgo.getHours() - 1);
 
-    // Clean up failed/cancelled jobs older than 24 hours
-    const oneDayAgo = new Date();
-    oneDayAgo.setDate(oneDayAgo.getDate() - 1);
+      // Clean up failed/cancelled jobs older than 24 hours
+      const oneDayAgo = new Date();
+      oneDayAgo.setDate(oneDayAgo.getDate() - 1);
 
-    // Delete completed jobs older than 1 hour
-    const { error: completedError } = await client
-      .from('job_queue')
-      .delete()
-      .eq('status', 'completed')
-      .lt('completed_at', oneHourAgo.toISOString());
+      // Count jobs before cleanup
+      const { count: completedCount } = await client
+        .from('job_queue')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'completed')
+        .lt('completed_at', oneHourAgo.toISOString());
 
-    if (completedError) {
-      this.logger.error('Failed to cleanup completed jobs:', completedError);
-    } else {
-      this.logger.log('Completed jobs cleaned up successfully');
-    }
+      const { count: failedCount } = await client
+        .from('job_queue')
+        .select('*', { count: 'exact', head: true })
+        .in('status', ['failed', 'cancelled'])
+        .lt('completed_at', oneDayAgo.toISOString());
 
-    // Delete failed/cancelled jobs older than 24 hours
-    const { error: failedError } = await client
-      .from('job_queue')
-      .delete()
-      .in('status', ['failed', 'cancelled'])
-      .lt('completed_at', oneDayAgo.toISOString());
+      // Delete completed jobs older than 1 hour
+      const { error: completedError } = await client
+        .from('job_queue')
+        .delete()
+        .eq('status', 'completed')
+        .lt('completed_at', oneHourAgo.toISOString());
 
-    if (failedError) {
-      this.logger.error('Failed to cleanup failed jobs:', failedError);
-    } else {
-      this.logger.log('Failed jobs cleaned up successfully');
+      if (completedError) {
+        this.logger.error('Failed to cleanup completed jobs:', completedError);
+        await this.systemLogService.logSystem({
+          logLevel: LogSeverity.ERROR,
+          category: SystemLogCategory.CRON,
+          serviceName: 'DatabaseQueueService',
+          message: 'Cron job failed - cleanupOldJobs (completed)',
+          details: {
+            error: completedError.message,
+            executionTimeMs: Date.now() - startTime,
+          },
+          stackTrace:
+            completedError instanceof Error ? completedError.stack : undefined,
+        });
+      } else {
+        this.logger.log('Completed jobs cleaned up successfully');
+      }
+
+      // Delete failed/cancelled jobs older than 24 hours
+      const { error: failedError } = await client
+        .from('job_queue')
+        .delete()
+        .in('status', ['failed', 'cancelled'])
+        .lt('completed_at', oneDayAgo.toISOString());
+
+      if (failedError) {
+        this.logger.error('Failed to cleanup failed jobs:', failedError);
+        await this.systemLogService.logSystem({
+          logLevel: LogSeverity.ERROR,
+          category: SystemLogCategory.CRON,
+          serviceName: 'DatabaseQueueService',
+          message: 'Cron job failed - cleanupOldJobs (failed)',
+          details: {
+            error: failedError.message,
+            executionTimeMs: Date.now() - startTime,
+          },
+          stackTrace:
+            failedError instanceof Error ? failedError.stack : undefined,
+        });
+      } else {
+        this.logger.log('Failed/cancelled jobs cleaned up successfully');
+      }
+
+      // Log successful cleanup
+      const executionTime = Date.now() - startTime;
+      await this.systemLogService.logSystem({
+        logLevel: LogSeverity.INFO,
+        category: SystemLogCategory.CRON,
+        serviceName: 'DatabaseQueueService',
+        message: 'Cron job completed - cleanupOldJobs',
+        details: {
+          completedJobsRemoved: completedCount || 0,
+          failedJobsRemoved: failedCount || 0,
+          totalRemoved: (completedCount || 0) + (failedCount || 0),
+          executionTimeMs: executionTime,
+        },
+      });
+    } catch (error) {
+      this.logger.error('Error in cleanupOldJobs:', error);
+      await this.systemLogService.logSystem({
+        logLevel: LogSeverity.ERROR,
+        category: SystemLogCategory.CRON,
+        serviceName: 'DatabaseQueueService',
+        message: 'Cron job exception - cleanupOldJobs',
+        details: {
+          error: error instanceof Error ? error.message : String(error),
+          executionTimeMs: Date.now() - startTime,
+        },
+        stackTrace: error instanceof Error ? error.stack : undefined,
+      });
     }
   }
 }

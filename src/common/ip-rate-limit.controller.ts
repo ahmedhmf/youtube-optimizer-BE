@@ -23,6 +23,8 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { UserRole } from '../auth/types/roles.types';
 import { IPRateLimitService } from './ip-rate-limit.service';
+import { UserLogService } from '../logging/services/user-log.service';
+import { LogSeverity, LogType } from '../logging/dto/log.types';
 
 class BlockIPDto {
   ipAddress: string;
@@ -36,7 +38,10 @@ class BlockIPDto {
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.ADMIN, UserRole.MODERATOR)
 export class IPRateLimitController {
-  constructor(private readonly rateLimitService: IPRateLimitService) {}
+  constructor(
+    private readonly rateLimitService: IPRateLimitService,
+    private readonly userLogService: UserLogService,
+  ) {}
 
   @Get('stats')
   @ApiOperation({
@@ -152,6 +157,20 @@ export class IPRateLimitController {
 
     await this.rateLimitService.blockIP(ipAddress, durationMs, reason.trim());
 
+    // Log IP blocking (no req available, using system log)
+    await this.userLogService.logActivity({
+      logType: LogType.SECURITY,
+      activityType: 'admin_ip_blocked',
+      description: `Admin manually blocked IP address: ${ipAddress}`,
+      severity: LogSeverity.CRITICAL,
+      metadata: {
+        ipAddress,
+        durationMinutes,
+        reason: reason.trim(),
+        blockedUntil: blockedUntil.toISOString(),
+      },
+    });
+
     return {
       message: `IP ${ipAddress} blocked successfully`,
       blockedUntil: blockedUntil.toISOString(),
@@ -188,6 +207,17 @@ export class IPRateLimitController {
 
     await this.rateLimitService.unblockIP(ipAddress);
 
+    // Log IP unblocking
+    await this.userLogService.logActivity({
+      logType: LogType.SECURITY,
+      activityType: 'admin_ip_unblocked',
+      description: `Admin unblocked IP address: ${ipAddress}`,
+      severity: LogSeverity.WARNING,
+      metadata: {
+        ipAddress,
+      },
+    });
+
     return {
       message: `IP ${ipAddress} unblocked successfully`,
     };
@@ -212,6 +242,17 @@ export class IPRateLimitController {
   @ApiResponse({ status: 403, description: 'Insufficient permissions' })
   async cleanupOldRecords() {
     await this.rateLimitService.cleanupOldRecords();
+
+    // Log cleanup operation
+    await this.userLogService.logActivity({
+      logType: LogType.ACTIVITY,
+      activityType: 'admin_rate_limit_cleanup',
+      description: 'Admin performed rate limit records cleanup',
+      severity: LogSeverity.INFO,
+      metadata: {
+        operation: 'cleanup_old_records',
+      },
+    });
 
     return {
       message: 'Old rate limit records cleaned up successfully',

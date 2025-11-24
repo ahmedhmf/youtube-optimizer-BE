@@ -36,6 +36,9 @@ import { PaginationQueryDto } from '../DTO/pagination-query.dto';
 import { CSRFGuard } from '../auth/guards/csrf.guard';
 import { AdminService } from './admin.service';
 import { UpdateUserDto } from './dto/update-user-info.dto';
+import { UserLogService } from '../logging/services/user-log.service';
+import { LogAggregatorService } from '../logging/services/log-aggregator.service';
+import { LogSeverity, LogType } from '../logging/dto/log.types';
 
 @ApiTags('Admin Management')
 @Controller('admin')
@@ -49,6 +52,8 @@ export class AdminController {
     private readonly accountLockoutService: AccountLockoutService,
     private readonly lockoutCleanupService: LockoutCleanupService,
     private readonly tokenBlacklistService: TokenBlacklistService,
+    private readonly userLogService: UserLogService,
+    private readonly logAggregatorService: LogAggregatorService,
   ) {}
 
   @Get('users')
@@ -115,19 +120,107 @@ export class AdminController {
   @Put('users/:id/role')
   @Throttle({ default: { limit: 10, ttl: 300000 } }) // 10 role changes per 5 minutes
   @RequirePermissions('canManageUsers')
-  updateUserRole(
+  async updateUserRole(
     @Param('id') userId: string,
     @Body() body: { role: UserRole },
+    @Req() req: any,
   ) {
+    // Get user data before update
+    const targetUser = await this.adminService.getUserById(userId);
+    const oldRole = targetUser.role;
+
     // Implementation would go here - update user role
+
+    // Log role change
+    await this.userLogService.logActivity({
+      userId: req.user.id,
+      logType: LogType.SECURITY,
+      activityType: 'admin_user_role_updated',
+      description: `Admin updated user role to ${body.role}`,
+      severity: LogSeverity.WARNING,
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+      metadata: {
+        targetUserId: userId,
+        newRole: body.role,
+        adminId: req.user.id,
+      },
+    });
+
+    // Audit trail
+    await this.logAggregatorService.logAuditTrail({
+      actorId: req.user.id,
+      actorEmail: req.user.email,
+      actorRole: req.user.role,
+      action: 'update_user_role',
+      entityType: 'user',
+      entityId: userId,
+      oldValues: { role: oldRole },
+      newValues: { role: body.role },
+      changes: ['role'],
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+      metadata: {
+        targetUserEmail: targetUser.email,
+        targetUserName: targetUser.name,
+      },
+    });
+
     return { message: `Update user ${userId} role to ${body.role}` };
   }
 
   @Delete('users/:id')
   @Throttle({ default: { limit: 5, ttl: 600000 } }) // 5 deletions per 10 minutes
   @RequirePermissions('canManageUsers')
-  deleteUser(@Param('id') userId: string) {
+  async deleteUser(@Param('id') userId: string, @Req() req: any) {
+    // Get complete user data before deletion
+    const targetUser = await this.adminService.getUserById(userId);
+    const userSnapshot = {
+      email: targetUser.email,
+      name: targetUser.name,
+      role: targetUser.role,
+      provider: targetUser.provider,
+      createdAt: targetUser.createdAt,
+      accountStatus: targetUser.accountStatus,
+    };
+
     // Implementation would go here - delete user
+
+    // Log user deletion
+    await this.userLogService.logActivity({
+      userId: req.user.id,
+      logType: LogType.SECURITY,
+      activityType: 'admin_user_deleted',
+      description: `Admin deleted user account`,
+      severity: LogSeverity.CRITICAL,
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+      metadata: {
+        targetUserId: userId,
+        adminId: req.user.id,
+      },
+    });
+
+    // Audit trail - capture complete user state before deletion
+    await this.logAggregatorService.logAuditTrail({
+      actorId: req.user.id,
+      actorEmail: req.user.email,
+      actorRole: req.user.role,
+      action: 'delete_user',
+      entityType: 'user',
+      entityId: userId,
+      oldValues: userSnapshot,
+      newValues: { deleted: true, deletedAt: new Date().toISOString() },
+      changes: ['account_deleted'],
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+      metadata: {
+        deletedUserEmail: targetUser.email,
+        deletedUserName: targetUser.name,
+        reason: 'admin_action',
+      },
+    });
+
     return { message: `Delete user ${userId}` };
   }
 
@@ -180,8 +273,57 @@ export class AdminController {
   @Post('lockouts/:identifier/reset')
   @RequirePermissions('canAccessAdminPanel')
   @Throttle({ short: { ttl: 1000, limit: 5 } })
-  async resetLockout(@Param('identifier') identifier: string) {
+  async resetLockout(@Param('identifier') identifier: string, @Req() req: any) {
+    // Get lockout status before reset
+    const lockoutStatus =
+      await this.accountLockoutService.checkLockoutStatus(identifier);
+
     await this.accountLockoutService.resetLockout(identifier);
+
+    // Log lockout reset
+    await this.userLogService.logActivity({
+      userId: req.user.id,
+      logType: LogType.SECURITY,
+      activityType: 'admin_lockout_reset',
+      description: `Admin reset account lockout for ${identifier}`,
+      severity: LogSeverity.WARNING,
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+      metadata: {
+        targetIdentifier: identifier,
+        adminId: req.user.id,
+      },
+    });
+
+    // Audit trail
+    await this.logAggregatorService.logAuditTrail({
+      actorId: req.user.id,
+      actorEmail: req.user.email,
+      actorRole: req.user.role,
+      action: 'reset_account_lockout',
+      entityType: 'account_lockout',
+      entityId: identifier,
+      oldValues: {
+        isLocked: lockoutStatus.isLocked,
+        totalFailedAttempts: lockoutStatus.totalFailedAttempts,
+        remainingAttempts: lockoutStatus.remainingAttempts,
+        lockoutUntil: lockoutStatus.lockoutUntil,
+      },
+      newValues: {
+        isLocked: false,
+        totalFailedAttempts: 0,
+        remainingAttempts: 3,
+        lockoutUntil: null,
+      },
+      changes: ['lockout_reset'],
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+      metadata: {
+        identifier,
+        previousAttempts: lockoutStatus.totalFailedAttempts,
+      },
+    });
+
     return {
       message: `Lockout reset for ${identifier}`,
       timestamp: new Date().toISOString(),
@@ -191,8 +333,24 @@ export class AdminController {
   @Post('lockouts/cleanup')
   @RequirePermissions('canAccessAdminPanel')
   @Throttle({ short: { ttl: 10000, limit: 1 } }) // Very restrictive - once per 10 seconds
-  async cleanupExpiredLockouts() {
+  async cleanupExpiredLockouts(@Req() req: any) {
     const cleanedCount = await this.lockoutCleanupService.manualCleanup();
+
+    // Log lockout cleanup
+    await this.userLogService.logActivity({
+      userId: req.user.id,
+      logType: LogType.ACTIVITY,
+      activityType: 'admin_lockouts_cleanup',
+      description: 'Admin performed expired lockouts cleanup',
+      severity: LogSeverity.INFO,
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+      metadata: {
+        recordsRemoved: cleanedCount,
+        adminId: req.user.id,
+      },
+    });
+
     return {
       message: 'Lockout cleanup completed',
       recordsRemoved: cleanedCount,
@@ -240,6 +398,7 @@ export class AdminController {
   @Throttle({ short: { ttl: 30000, limit: 5 } }) // 5 times per 30 seconds
   async blacklistAllUserTokens(
     @Param('userId') userId: string,
+    @Req() req: any,
     @Body('reason') reason?: string,
   ) {
     const blacklistReason =
@@ -247,10 +406,55 @@ export class AdminController {
         ? BlacklistReason.SECURITY_BREACH
         : BlacklistReason.ADMIN_REVOKE;
 
+    // Get target user info
+    const targetUser = await this.adminService.getUserById(userId);
+
     await this.tokenBlacklistService.blacklistAllUserTokens(
       userId,
       blacklistReason,
     );
+
+    // Log token blacklisting
+    await this.userLogService.logActivity({
+      userId: req.user.id,
+      logType: LogType.SECURITY,
+      activityType: 'admin_tokens_blacklisted',
+      description: `Admin blacklisted all tokens for user`,
+      severity: LogSeverity.CRITICAL,
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+      metadata: {
+        targetUserId: userId,
+        reason: blacklistReason,
+        adminId: req.user.id,
+      },
+    });
+
+    // Audit trail
+    await this.logAggregatorService.logAuditTrail({
+      actorId: req.user.id,
+      actorEmail: req.user.email,
+      actorRole: req.user.role,
+      action: 'blacklist_all_tokens',
+      entityType: 'user_tokens',
+      entityId: userId,
+      oldValues: {
+        hasActiveTokens: true,
+      },
+      newValues: {
+        allTokensBlacklisted: true,
+        reason: blacklistReason,
+        revokedAt: new Date().toISOString(),
+      },
+      changes: ['tokens_revoked'],
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+      metadata: {
+        targetUserEmail: targetUser.email,
+        targetUserName: targetUser.name,
+        reason: blacklistReason,
+      },
+    });
 
     return {
       message: 'All tokens blacklisted for user',
@@ -263,8 +467,23 @@ export class AdminController {
   @Post('tokens/cleanup')
   @RequirePermissions('canAccessAdminPanel')
   @Throttle({ short: { ttl: 60000, limit: 1 } }) // Once per minute
-  async cleanupExpiredTokens() {
+  async cleanupExpiredTokens(@Req() req: any) {
     await this.tokenBlacklistService.cleanupExpiredTokens();
+
+    // Log token cleanup
+    await this.userLogService.logActivity({
+      userId: req.user.id,
+      logType: LogType.ACTIVITY,
+      activityType: 'admin_tokens_cleanup',
+      description: 'Admin performed expired tokens cleanup',
+      severity: LogSeverity.INFO,
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+      metadata: {
+        adminId: req.user.id,
+      },
+    });
+
     return {
       message: 'Expired tokens cleanup completed',
       timestamp: new Date().toISOString(),
@@ -274,12 +493,58 @@ export class AdminController {
   @Post('users/:userId/disable')
   @RequirePermissions('canAccessAdminPanel')
   @Throttle({ short: { ttl: 30000, limit: 3 } }) // 3 times per 30 seconds
-  async disableUserAccount(@Param('userId') userId: string) {
+  async disableUserAccount(@Param('userId') userId: string, @Req() req: any) {
+    // Get user info before disabling
+    const targetUser = await this.adminService.getUserById(userId);
+    const oldStatus = targetUser.accountStatus;
+
     // Blacklist all tokens for account disabled
     await this.tokenBlacklistService.blacklistAllUserTokens(
       userId,
       BlacklistReason.ACCOUNT_DISABLED,
     );
+
+    // Log account disable
+    await this.userLogService.logActivity({
+      userId: req.user.id,
+      logType: LogType.SECURITY,
+      activityType: 'admin_account_disabled',
+      description: `Admin disabled user account`,
+      severity: LogSeverity.CRITICAL,
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+      metadata: {
+        targetUserId: userId,
+        adminId: req.user.id,
+      },
+    });
+
+    // Audit trail
+    await this.logAggregatorService.logAuditTrail({
+      actorId: req.user.id,
+      actorEmail: req.user.email,
+      actorRole: req.user.role,
+      action: 'disable_user_account',
+      entityType: 'user',
+      entityId: userId,
+      oldValues: {
+        accountStatus: oldStatus,
+        hasActiveTokens: true,
+      },
+      newValues: {
+        accountStatus: 'disabled',
+        hasActiveTokens: false,
+        disabledAt: new Date().toISOString(),
+      },
+      changes: ['account_status', 'tokens_revoked'],
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+      metadata: {
+        targetUserEmail: targetUser.email,
+        targetUserName: targetUser.name,
+        reason: 'admin_action',
+      },
+    });
 
     return {
       message: 'User account disabled and all tokens revoked',
@@ -311,11 +576,35 @@ export class AdminController {
     @Req() req: any,
   ) {
     const adminId = req.user.id;
+
+    // Get old values before update
+    const oldUser = await this.adminService.getUserById(userId);
+
     const updatedUser = await this.adminService.updateUser(
       userId,
       updateData,
       adminId,
+      req.ip,
+      req.get('user-agent'),
     );
+
+    // Log user update
+    await this.userLogService.logActivity({
+      userId: adminId,
+      logType: LogType.SECURITY,
+      activityType: 'admin_user_updated',
+      description: `Admin updated user information`,
+      severity: LogSeverity.WARNING,
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+      metadata: {
+        targetUserId: userId,
+        updatedFields: Object.keys(updateData),
+        adminId,
+      },
+    });
+
+    // Audit trail is now logged in AdminService.updateUser()
 
     return {
       message: 'User updated successfully',

@@ -1,10 +1,17 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { SupabaseService } from './supabase.service';
 import { v4 as uuidv4 } from 'uuid';
+import { SystemLogService } from '../logging/services/system-log.service';
+import { LogSeverity, SystemLogCategory } from '../logging/dto/log.types';
 
 @Injectable()
 export class SupabaseStorageService {
-  constructor(private readonly supabase: SupabaseService) {}
+  private readonly logger = new Logger(SupabaseStorageService.name);
+
+  constructor(
+    private readonly supabase: SupabaseService,
+    private readonly systemLogService: SystemLogService,
+  ) {}
 
   async uploadVideo(
     userId: string,
@@ -59,6 +66,24 @@ export class SupabaseStorageService {
         .from('uploads')
         .getPublicUrl(altFilePath);
 
+      await this.systemLogService.logSystem({
+        logLevel: LogSeverity.WARNING,
+        category: SystemLogCategory.STORAGE,
+        serviceName: 'SupabaseStorageService',
+        message: 'Video uploaded using alternative path after initial failure',
+        details: {
+          userId,
+          fileName: file.originalname,
+          fileSize: file.buffer.length,
+          mimeType: file.mimetype,
+          originalPath: filePath,
+          alternativePath: altFilePath,
+          originalError: error.message,
+        },
+        relatedEntityType: 'user',
+        relatedEntityId: userId,
+      });
+
       return {
         publicUrl: altUrlData.publicUrl,
         key: altFilePath,
@@ -69,6 +94,22 @@ export class SupabaseStorageService {
     const { data: urlData } = client.storage
       .from('uploads')
       .getPublicUrl(filePath);
+
+    await this.systemLogService.logSystem({
+      logLevel: LogSeverity.INFO,
+      category: SystemLogCategory.STORAGE,
+      serviceName: 'SupabaseStorageService',
+      message: 'Video uploaded successfully to Supabase storage',
+      details: {
+        userId,
+        fileName: file.originalname,
+        fileSize: file.buffer.length,
+        mimeType: file.mimetype,
+        storagePath: filePath,
+      },
+      relatedEntityType: 'user',
+      relatedEntityId: userId,
+    });
 
     return {
       publicUrl: urlData.publicUrl,

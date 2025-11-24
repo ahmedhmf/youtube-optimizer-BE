@@ -10,8 +10,11 @@ import {
   Req,
   Res,
   BadRequestException,
+  UnauthorizedException,
+  Logger,
 } from '@nestjs/common';
 import express from 'express';
+import * as crypto from 'crypto';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { SessionSecurityService } from './session-security.service';
@@ -41,15 +44,22 @@ import { AuditLoggingService } from 'src/common/audit-logging.service';
 import { AuditEventType } from 'src/common/types/audit-event.type';
 import { AuditStatus } from 'src/common/types/audit-status.type';
 import { PasswordSecurityService } from 'src/common/password-security.service';
+import { UserLogService } from 'src/logging/services/user-log.service';
+import { LogSeverity, LogType } from 'src/logging/dto/log.types';
+import { LogAggregatorService } from 'src/logging/services/log-aggregator.service';
 
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
+  private readonly logger = new Logger(AuthController.name);
+
   constructor(
     private readonly authService: AuthService,
     private readonly sessionSecurityService: SessionSecurityService,
     private readonly auditLoggingService: AuditLoggingService,
     private readonly passwordSecurityService: PasswordSecurityService,
+    private readonly userLogService: UserLogService,
+    private readonly logAggregatorService: LogAggregatorService,
   ) {}
 
   @Post('register')
@@ -159,15 +169,50 @@ export class AuthController {
     const ipAddress = req.ip || req.connection.remoteAddress;
     const userAgent = req.get('user-agent');
 
-    // Validate password security before registration
-    await this.passwordSecurityService.validateRegistrationPassword(
-      registerDto.password,
-      undefined, // No user ID yet as they're registering
-      ipAddress,
-      userAgent,
-    );
+    try {
+      // Validate password security before registration
+      await this.passwordSecurityService.validateRegistrationPassword(
+        registerDto.password,
+        undefined, // No user ID yet as they're registering
+        ipAddress,
+        userAgent,
+      );
 
-    return this.authService.register(registerDto);
+      const result = await this.authService.register(registerDto);
+
+      // Log successful registration
+      await this.userLogService.logActivity({
+        userId: result.user?.id,
+        logType: LogType.ACTIVITY,
+        activityType: 'user_registration',
+        description: `User registered successfully with email: ${registerDto.email}`,
+        severity: LogSeverity.INFO,
+        ipAddress,
+        userAgent,
+        metadata: {
+          email: registerDto.email,
+          registrationMethod: 'email',
+        },
+      });
+
+      return result;
+    } catch (error) {
+      // Log failed registration attempt
+      await this.userLogService.logActivity({
+        logType: LogType.SECURITY,
+        activityType: 'user_registration_failed',
+        description: `Registration failed for email: ${registerDto.email}`,
+        severity: LogSeverity.WARNING,
+        ipAddress,
+        userAgent,
+        metadata: {
+          email: registerDto.email,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+
+      throw error;
+    }
   }
 
   @Post('login')
@@ -308,6 +353,24 @@ export class AuthController {
         AuditStatus.SUCCESS,
       );
 
+      // Log user activity for successful login
+      await this.userLogService.logActivity({
+        userId: result.user?.id,
+        logType: LogType.ACTIVITY,
+        activityType: 'user_login',
+        description: `User logged in successfully using session method`,
+        severity: passwordCheck.shouldForcePasswordChange
+          ? LogSeverity.WARNING
+          : LogSeverity.INFO,
+        ipAddress,
+        userAgent,
+        metadata: {
+          email: loginDto.email,
+          loginMethod: 'session',
+          passwordBreached: passwordCheck.shouldForcePasswordChange,
+        },
+      });
+
       // Add password security info to response
       const responseData = {
         ...result,
@@ -356,6 +419,28 @@ export class AuthController {
           AuditStatus.SUCCESS,
         );
 
+        // Log user activity for fallback login
+        await this.userLogService.logActivity({
+          userId: result.user?.id,
+          logType: LogType.ACTIVITY,
+          activityType: 'user_login',
+          description: `User logged in successfully using standard method (fallback)`,
+          severity: passwordCheck.shouldForcePasswordChange
+            ? LogSeverity.WARNING
+            : LogSeverity.INFO,
+          ipAddress,
+          userAgent,
+          metadata: {
+            email: loginDto.email,
+            loginMethod: 'standard',
+            passwordBreached: passwordCheck.shouldForcePasswordChange,
+            fallbackReason:
+              sessionError instanceof Error
+                ? sessionError.message
+                : String(sessionError),
+          },
+        });
+
         // Add password security info to response
         const responseData = {
           ...result,
@@ -381,6 +466,20 @@ export class AuthController {
           },
           AuditStatus.FAILURE,
         );
+
+        // Log user activity for failed login
+        await this.userLogService.logActivity({
+          logType: LogType.SECURITY,
+          activityType: 'user_login_failed',
+          description: `Login attempt failed for email: ${loginDto.email}`,
+          severity: LogSeverity.WARNING,
+          ipAddress,
+          userAgent,
+          metadata: {
+            email: loginDto.email,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        });
 
         throw error;
       }
@@ -439,6 +538,17 @@ export class AuthController {
         AuditStatus.SUCCESS,
       );
 
+      // Log user activity for logout without token
+      await this.userLogService.logActivity({
+        logType: LogType.ACTIVITY,
+        activityType: 'user_logout',
+        description: 'User logged out (no active token)',
+        severity: LogSeverity.INFO,
+        ipAddress: req.ip,
+        userAgent: req.get('User-Agent'),
+        metadata: { reason: 'no_token' },
+      });
+
       return res.json({
         success: true,
         message: 'Logged out successfully (no active token)',
@@ -471,6 +581,21 @@ export class AuthController {
               },
               AuditStatus.SUCCESS,
             );
+
+            // Log user activity for successful logout
+            await this.userLogService.logActivity({
+              userId,
+              logType: LogType.ACTIVITY,
+              activityType: 'user_logout',
+              description: 'User logged out successfully',
+              severity: LogSeverity.INFO,
+              ipAddress: req.ip,
+              userAgent: req.get('User-Agent'),
+              metadata: {
+                tokenBlacklisted: true,
+                method: 'token_blacklist',
+              },
+            });
           } catch (blacklistError) {
             console.error('Error during token blacklisting:', blacklistError);
 
@@ -617,8 +742,27 @@ export class AuthController {
     description: 'Rate limit exceeded - too many refresh attempts',
   })
   @ApiSecurity('csrf-token', ['X-CSRF-Token'])
-  async refresh(@Body() refreshDto: RefreshTokenDto) {
-    return this.authService.refresh(refreshDto.refreshToken);
+  async refresh(
+    @Body() refreshDto: RefreshTokenDto,
+    @Req() req: express.Request,
+  ) {
+    const result = await this.authService.refresh(refreshDto.refreshToken);
+
+    // Log token refresh
+    await this.userLogService.logActivity({
+      userId: (result as any).user?.id,
+      logType: LogType.ACTIVITY,
+      activityType: 'token_refreshed',
+      description: 'User refreshed authentication token',
+      severity: LogSeverity.INFO,
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+      metadata: {
+        method: 'refresh_token_body',
+      },
+    });
+
+    return result;
   }
 
   @Get('profile')
@@ -700,7 +844,99 @@ export class AuthController {
     @Req() req: Request & { user: { id: string } },
     @Body() updateProfileDto: UpdateProfileDto,
   ): Promise<User> {
-    return this.authService.updateProfile(req.user.id, updateProfileDto);
+    const ipAddress = (req as any).ip || 'unknown';
+    const userAgent = req.headers['user-agent'] || 'unknown';
+
+    const result = await this.authService.updateProfile(
+      req.user.id,
+      updateProfileDto,
+      ipAddress,
+      userAgent,
+    );
+
+    // Log profile update
+    await this.userLogService.logActivity({
+      userId: req.user.id,
+      logType: LogType.ACTIVITY,
+      activityType: 'profile_updated',
+      description: 'User updated their profile information',
+      severity: LogSeverity.INFO,
+      ipAddress,
+      userAgent,
+      metadata: {
+        updatedFields: Object.keys(updateProfileDto),
+      },
+    });
+
+    // Audit trail is logged in AuthService.updateProfile()
+
+    return result;
+  }
+
+  @Get('social/google/url')
+  @ApiOperation({
+    summary: 'Get Google OAuth URL',
+    description: `
+    Returns the Google OAuth authorization URL for the frontend to redirect users.
+    
+    **Frontend Usage:**
+    1. Call this endpoint to get the OAuth URL
+    2. Redirect user to the returned URL
+    3. Google redirects back to backend callback
+    4. Backend redirects to frontend with auth result
+    `,
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Google OAuth URL generated successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        url: {
+          type: 'string',
+          example: 'https://accounts.google.com/o/oauth2/v2/auth?client_id=...',
+          description: 'Complete Google OAuth authorization URL',
+        },
+        state: {
+          type: 'string',
+          example: 'random-csrf-token-123',
+          description: 'CSRF state token (store this to validate callback)',
+        },
+      },
+    },
+  })
+  getGoogleAuthUrl() {
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const redirectUri =
+      process.env.GOOGLE_REDIRECT_URI ||
+      `${process.env.BACKEND_URL || 'http://localhost:3000'}/auth/social/google`;
+
+    if (!clientId) {
+      throw new BadRequestException('Google OAuth is not configured');
+    }
+
+    // Generate CSRF state token
+    const state = crypto.randomBytes(32).toString('hex');
+
+    // Store state in session or cache for validation (optional but recommended)
+    // You could also return it to frontend to store temporarily
+
+    const googleAuthUrl =
+      'https://accounts.google.com/o/oauth2/v2/auth?' +
+      new URLSearchParams({
+        client_id: clientId,
+        redirect_uri: redirectUri,
+        response_type: 'code',
+        scope: 'openid email profile',
+        state,
+        access_type: 'offline',
+        prompt: 'consent',
+      }).toString();
+
+    return {
+      url: googleAuthUrl,
+      state,
+    };
   }
 
   @Post('social/google')
@@ -786,6 +1022,22 @@ export class AuthController {
         AuditStatus.SUCCESS,
       );
 
+      // Log user activity for Google login
+      await this.userLogService.logActivity({
+        userId: result.user?.id,
+        logType: LogType.ACTIVITY,
+        activityType: 'user_login_social',
+        description: 'User logged in successfully via Google',
+        severity: LogSeverity.INFO,
+        ipAddress,
+        userAgent,
+        metadata: {
+          provider: 'google',
+          loginMethod: 'social_session',
+          email: result.user?.email,
+        },
+      });
+
       return res.json(result);
     } catch (sessionError) {
       console.warn(
@@ -818,6 +1070,26 @@ export class AuthController {
           AuditStatus.SUCCESS,
         );
 
+        // Log user activity for Google login (fallback)
+        await this.userLogService.logActivity({
+          userId: result.user?.id,
+          logType: LogType.ACTIVITY,
+          activityType: 'user_login_social',
+          description: 'User logged in successfully via Google (fallback)',
+          severity: LogSeverity.INFO,
+          ipAddress,
+          userAgent,
+          metadata: {
+            provider: 'google',
+            loginMethod: 'social_standard',
+            email: result.user?.email,
+            fallbackReason:
+              sessionError instanceof Error
+                ? sessionError.message
+                : String(sessionError),
+          },
+        });
+
         return res.json(result);
       } catch (error) {
         console.error('Google login error:', error);
@@ -843,8 +1115,177 @@ export class AuthController {
           AuditStatus.FAILURE,
         );
 
+        // Log user activity for failed Google login
+        await this.userLogService.logActivity({
+          logType: LogType.SECURITY,
+          activityType: 'user_login_social_failed',
+          description: 'Google login attempt failed',
+          severity: LogSeverity.WARNING,
+          ipAddress,
+          userAgent,
+          metadata: {
+            provider: 'google',
+            error: error instanceof Error ? error.message : String(error),
+            tokenProvided: !!body.token,
+          },
+        });
+
         throw error;
       }
+    }
+  }
+
+  @Get('social/google')
+  @ApiOperation({
+    summary: 'Google OAuth Callback',
+    description: `
+    Handles the OAuth callback redirect from Google.
+    
+    **OAuth Flow:**
+    1. User clicks "Login with Google"
+    2. Redirected to Google OAuth consent screen
+    3. Google redirects back to this endpoint with auth code
+    4. Server exchanges code for user info and creates session
+    5. Redirects to frontend with success/error status
+    `,
+  })
+  @ApiResponse({
+    status: 302,
+    description: 'Redirects to frontend with auth result',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid OAuth state or code',
+  })
+  async googleCallback(
+    @Req() req: express.Request,
+    @Res() res: express.Response,
+  ): Promise<void> {
+    const { state, code } = req.query;
+    const ipAddress = req.ip || 'unknown';
+    const userAgent = req.get('User-Agent') || 'unknown';
+    const stateStr = typeof state === 'string' ? state : '';
+
+    // Debug: Log all query parameters
+    this.logger.debug('Google OAuth callback received', {
+      queryParams: req.query,
+      hasCode: !!code,
+      hasState: !!state,
+      codeType: typeof code,
+      stateType: typeof state,
+    });
+
+    try {
+      // Check for OAuth errors from Google
+      const error = req.query.error;
+      if (error) {
+        const errorDescription = req.query.error_description || 'OAuth error';
+        throw new BadRequestException(
+          `Google OAuth error: ${errorDescription}`,
+        );
+      }
+
+      // Validate required parameters
+      if (!state || typeof state !== 'string') {
+        throw new BadRequestException(
+          'Invalid OAuth state - please restart login flow',
+        );
+      }
+
+      if (!code || typeof code !== 'string') {
+        throw new BadRequestException(
+          'Authorization code is required - please restart login flow',
+        );
+      }
+
+      // Exchange code for tokens and create user session
+      const result = await this.authService.handleGoogleCallback(
+        code,
+        req,
+        res,
+      );
+
+      // Log successful Google OAuth login
+      await this.auditLoggingService.logAuthEvent(
+        AuditEventType.LOGIN,
+        result.user?.id,
+        ipAddress,
+        userAgent,
+        {
+          provider: 'google',
+          loginMethod: 'oauth_callback',
+          email: result.user?.email,
+        },
+        AuditStatus.SUCCESS,
+      );
+
+      await this.userLogService.logActivity({
+        userId: result.user?.id,
+        logType: LogType.ACTIVITY,
+        activityType: 'user_login_social',
+        description: 'User logged in successfully via Google OAuth',
+        severity: LogSeverity.INFO,
+        ipAddress,
+        userAgent,
+        metadata: {
+          provider: 'google',
+          loginMethod: 'oauth_callback',
+          email: result.user?.email,
+        },
+      });
+
+      // Redirect to frontend with success and tokens
+      const frontendCallbackUrl =
+        process.env.FRONTEND_CALLBACK_URL ||
+        'http://localhost:4200/auth/callback';
+      
+      // Encode the access token for URL safety and pass to frontend
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      const redirectUrl = `${frontendCallbackUrl}?success=true&state=${encodeURIComponent(String(state))}&access_token=${encodeURIComponent(String(result.accessToken))}`;
+
+      res.redirect(redirectUrl);
+    } catch (error) {
+      this.logger.error('Google OAuth callback error:', error);
+
+      // Log failed Google OAuth login
+      await this.auditLoggingService.logAuthEvent(
+        AuditEventType.LOGIN_FAILED,
+        undefined,
+        ipAddress,
+        userAgent,
+        {
+          provider: 'google',
+          loginMethod: 'oauth_callback',
+          error: error instanceof Error ? error.message : String(error),
+          codeProvided: !!code,
+          stateProvided: !!state,
+        },
+        AuditStatus.FAILURE,
+      );
+
+      await this.userLogService.logActivity({
+        logType: LogType.SECURITY,
+        activityType: 'user_login_social_failed',
+        description: 'Google OAuth login attempt failed',
+        severity: LogSeverity.WARNING,
+        ipAddress,
+        userAgent,
+        metadata: {
+          provider: 'google',
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+
+      // Redirect to frontend with error
+      const frontendCallbackUrl =
+        process.env.FRONTEND_CALLBACK_URL ||
+        'http://localhost:4200/auth/callback';
+      const errorMessage = encodeURIComponent(
+        error instanceof Error ? error.message : 'OAuth authentication failed',
+      );
+      const errorUrl = `${frontendCallbackUrl}?error=${errorMessage}&state=${stateStr}`;
+
+      res.redirect(errorUrl);
     }
   }
 
@@ -929,10 +1370,48 @@ export class AuthController {
   @ApiSecurity('csrf-token', ['X-CSRF-Token'])
   @UseGuards(CSRFGuard)
   @Throttle({ default: { limit: 2, ttl: 300000 } }) // 2 attempts per 5 minutes
-  async requestPasswordReset(@Body() forgotPasswordDto: ForgotPasswordDto) {
-    const result =
-      await this.authService.requestPasswordReset(forgotPasswordDto);
-    return result;
+  async requestPasswordReset(
+    @Body() forgotPasswordDto: ForgotPasswordDto,
+    @Req() req: express.Request,
+  ) {
+    const ipAddress = req.ip || req.connection.remoteAddress;
+    const userAgent = req.get('user-agent');
+
+    try {
+      const result =
+        await this.authService.requestPasswordReset(forgotPasswordDto);
+
+      // Log password reset request
+      await this.userLogService.logActivity({
+        logType: LogType.SECURITY,
+        activityType: 'password_reset_requested',
+        description: `Password reset requested for email: ${forgotPasswordDto.email}`,
+        severity: LogSeverity.INFO,
+        ipAddress,
+        userAgent,
+        metadata: {
+          email: forgotPasswordDto.email,
+        },
+      });
+
+      return result;
+    } catch (error) {
+      // Log failed password reset request
+      await this.userLogService.logActivity({
+        logType: LogType.SECURITY,
+        activityType: 'password_reset_request_failed',
+        description: `Password reset request failed for email: ${forgotPasswordDto.email}`,
+        severity: LogSeverity.WARNING,
+        ipAddress,
+        userAgent,
+        metadata: {
+          email: forgotPasswordDto.email,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+
+      throw error;
+    }
   }
 
   @Post('reset-password')
@@ -1027,16 +1506,53 @@ export class AuthController {
     const ipAddress = req.ip || req.connection.remoteAddress;
     const userAgent = req.get('user-agent');
 
-    // Validate password security before reset
-    await this.passwordSecurityService.validatePasswordChange(
-      resetPasswordDto.newPassword,
-      resetPasswordDto.token, // Use token as user identifier for now
-      ipAddress,
-      userAgent,
-    );
+    try {
+      // Validate password security before reset
+      await this.passwordSecurityService.validatePasswordChange(
+        resetPasswordDto.newPassword,
+        resetPasswordDto.token, // Use token as user identifier for now
+        ipAddress,
+        userAgent,
+      );
 
-    const result = await this.authService.resetPassword(resetPasswordDto);
-    return result;
+      const result = await this.authService.resetPassword(
+        resetPasswordDto,
+        ipAddress,
+        userAgent,
+      );
+
+      // Log successful password reset
+      await this.userLogService.logActivity({
+        logType: LogType.SECURITY,
+        activityType: 'password_reset_completed',
+        description: 'User successfully reset their password',
+        severity: LogSeverity.WARNING,
+        ipAddress,
+        userAgent,
+        metadata: {
+          resetMethod: 'email_token',
+        },
+      });
+
+      // Audit trail is logged in AuthService.resetPassword()
+
+      return result;
+    } catch (error) {
+      // Log failed password reset
+      await this.userLogService.logActivity({
+        logType: LogType.SECURITY,
+        activityType: 'password_reset_failed',
+        description: 'Password reset attempt failed',
+        severity: LogSeverity.ERROR,
+        ipAddress,
+        userAgent,
+        metadata: {
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+
+      throw error;
+    }
   }
 
   @Post('refresh')
@@ -1132,9 +1648,39 @@ export class AuthController {
   ): Promise<express.Response<any, Record<string, any>>> {
     try {
       const result = await this.sessionSecurityService.refreshSession(req, res);
+
+      if (!result) {
+        throw new UnauthorizedException('Invalid or expired session');
+      }
+
+      // Extract user from request (set by session refresh if successful)
+      const user = (req as any).user;
+
+      // Log session token refresh if we have user info
+      if (user?.id) {
+        await this.userLogService.logActivity({
+          userId: user.id,
+          logType: LogType.ACTIVITY,
+          activityType: 'token_refreshed',
+          description: 'User refreshed authentication token via session',
+          severity: LogSeverity.INFO,
+          ipAddress: req.ip,
+          userAgent: req.get('user-agent'),
+          metadata: {
+            method: 'session_refresh',
+          },
+        });
+      }
+
       return res.json(result);
-    } catch {
-      throw new BadRequestException('Failed to refresh token');
+    } catch (error) {
+      // Don't log here - GlobalExceptionFilter will log it
+      throw new UnauthorizedException(
+        error instanceof Error &&
+        !error.message.includes('Cannot read properties')
+          ? error.message
+          : 'Invalid or expired session',
+      );
     }
   }
 
@@ -1229,6 +1775,21 @@ export class AuthController {
     @Res() res: express.Response,
   ) {
     await this.sessionSecurityService.revokeAllUserSessions(req.user.id);
+
+    // Log logout from all devices
+    await this.userLogService.logActivity({
+      userId: req.user.id,
+      logType: LogType.SECURITY,
+      activityType: 'logout_all_devices',
+      description: 'User logged out from all devices',
+      severity: LogSeverity.WARNING,
+      ipAddress: (req as any).ip,
+      userAgent: req.headers['user-agent'] || 'unknown',
+      metadata: {
+        reason: 'user_initiated',
+      },
+    });
+
     res.clearCookie('refresh_token', {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
@@ -1305,8 +1866,59 @@ export class AuthController {
     @Req() req: Request & { user: { id: string } },
     @Res() res: express.Response,
   ): Promise<express.Response<any, Record<string, any>>> {
+    const ipAddress = (req as any).ip || 'unknown';
+    const userAgent = req.headers['user-agent'] || 'unknown';
+
+    // Get session details before revoking for audit trail
+    const sessionDetails =
+      await this.sessionSecurityService.getSessionDetails(sessionId);
+
     // TODO: Verify session belongs to user
     await this.sessionSecurityService.revokeSession(sessionId, res);
+
+    // Log session revocation
+    await this.userLogService.logActivity({
+      userId: req.user.id,
+      logType: LogType.SECURITY,
+      activityType: 'session_revoked',
+      description: `User revoked a specific session`,
+      severity: LogSeverity.WARNING,
+      ipAddress,
+      userAgent,
+      metadata: {
+        revokedSessionId: sessionId,
+      },
+    });
+
+    // Audit trail for session revocation
+    await this.logAggregatorService.logAuditTrail({
+      actorId: req.user.id,
+      actorEmail: (req.user as any).email || 'unknown',
+      actorRole: (req.user as any).role || 'user',
+      action: 'revoke_session',
+      entityType: 'user_session',
+      entityId: sessionId,
+      oldValues: {
+        sessionActive: true,
+        sessionId: sessionId,
+        deviceInfo: sessionDetails?.deviceInfo,
+        lastActivity: sessionDetails?.lastActivity,
+      },
+      newValues: {
+        sessionActive: false,
+        revokedAt: new Date().toISOString(),
+        revokedBy: req.user.id,
+      },
+      changes: ['session_revoked'],
+      ipAddress,
+      userAgent,
+      metadata: {
+        revokedSessionId: sessionId,
+        revocationMethod: 'manual',
+        revokedFromDevice: userAgent,
+      },
+    });
+
     return res.json({ message: 'Session revoked successfully' });
   }
 

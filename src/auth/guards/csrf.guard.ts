@@ -2,7 +2,7 @@ import {
   Injectable,
   CanActivate,
   ExecutionContext,
-  BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Request } from 'express';
@@ -38,11 +38,7 @@ export class CSRFGuard implements CanActivate {
 
     // Validate CSRF token
     if (!this.csrfService.validateToken(request)) {
-      throw new BadRequestException({
-        message: 'Invalid or missing CSRF token',
-        error: 'CSRF_TOKEN_INVALID',
-        statusCode: 400,
-      });
+      throw new ForbiddenException('Invalid or missing CSRF token');
     }
 
     return true;

@@ -13,4 +13,5 @@ export interface AuthenticatedRequest extends Request {
     'x-csrf-token'?: string;
     'content-type'?: string;
   };
+  ip: string;
 }

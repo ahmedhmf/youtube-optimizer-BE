@@ -9,12 +9,13 @@ import { SupabaseModule } from './supabase/supabase.module';
 import { AuthModule } from './auth/auth.module';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { CommonModule } from './common/common.module';
-import { OnboardingModule } from './common/onboarding.module';
 import { SecurityMiddleware } from './common/security.middleware';
 import { IPRateLimitMiddleware } from './common/ip-rate-limit.middleware';
 import { EnvironmentService } from './common/environment.service';
 import { AdminModule } from './admin/admin.module';
 import { ApiUsageTrackerMiddleware } from './common/middleware/api-usage-tracker.middleware';
+import { LoggingModule } from './logging/logging.module';
+import { OnboardingModule } from './onboarding/onboarding.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { ApiUsageTrackerMiddleware } from './common/middleware/api-usage-tracker
       isGlobal: true,
       envFilePath: '.env',
     }),
+    LoggingModule,
     CommonModule,
     OnboardingModule,
     AuthModule,
@@ -35,6 +37,7 @@ import { ApiUsageTrackerMiddleware } from './common/middleware/api-usage-tracker
       inject: [EnvironmentService],
     }),
     AdminModule,
+    LoggingModule,
   ],
   controllers: [AppController],
   providers: [

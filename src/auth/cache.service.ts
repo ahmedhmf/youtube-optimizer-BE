@@ -1,13 +1,18 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createClient, RedisClientType } from 'redis';
+import { SystemLogService } from '../logging/services/system-log.service';
+import { LogSeverity, SystemLogCategory } from '../logging/dto/log.types';
 
 @Injectable()
 export class CacheService implements OnModuleInit {
   private readonly logger = new Logger(CacheService.name);
   private client: RedisClientType | null = null;
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly systemLogService: SystemLogService,
+  ) {}
 
   async onModuleInit() {
     const redisHost = this.configService.get<string>('REDIS_HOST', 'localhost');
@@ -29,13 +34,35 @@ export class CacheService implements OnModuleInit {
 
       this.client.on('connect', () => {
         this.logger.log('Connected to Redis server');
+        this.systemLogService.logSystem({
+          logLevel: LogSeverity.INFO,
+          category: SystemLogCategory.CACHE,
+          serviceName: 'CacheService',
+          message: 'Redis connection established successfully',
+          details: { host: redisHost, port: redisPort },
+        });
       });
 
       this.client.on('disconnect', () => {
         this.logger.warn('Disconnected from Redis server');
+        this.systemLogService.logSystem({
+          logLevel: LogSeverity.WARNING,
+          category: SystemLogCategory.CACHE,
+          serviceName: 'CacheService',
+          message: 'Redis connection disconnected',
+          details: { host: redisHost, port: redisPort },
+        });
       });
 
       await this.client.connect();
+
+      await this.systemLogService.logSystem({
+        logLevel: LogSeverity.INFO,
+        category: SystemLogCategory.CACHE,
+        serviceName: 'CacheService',
+        message: 'Redis client initialized and connected',
+        details: { url: redisUrl.replace(/:[^:]*@/, ':***@') },
+      });
     } catch (error) {
       this.logger.error(
         'Failed to connect to Redis:',
@@ -44,6 +71,19 @@ export class CacheService implements OnModuleInit {
       // For development, we'll use in-memory fallback
       this.logger.warn('Using in-memory cache fallback for development');
       this.client = null;
+
+      await this.systemLogService.logSystem({
+        logLevel: LogSeverity.ERROR,
+        category: SystemLogCategory.CACHE,
+        serviceName: 'CacheService',
+        message: 'Failed to connect to Redis, using in-memory fallback',
+        details: {
+          error: error instanceof Error ? error.message : String(error),
+          host: redisHost,
+          port: redisPort,
+        },
+        stackTrace: error instanceof Error ? error.stack : undefined,
+      });
     }
   }
 
@@ -69,6 +109,18 @@ export class CacheService implements OnModuleInit {
       this.logger.debug(`Cached key: ${key}, TTL: ${ttlSeconds || 'none'}`);
     } catch (error) {
       this.logger.error(`Failed to cache key ${key}:`, error);
+      await this.systemLogService.logSystem({
+        logLevel: LogSeverity.ERROR,
+        category: SystemLogCategory.CACHE,
+        serviceName: 'CacheService',
+        message: 'Redis SET operation failed',
+        details: {
+          key,
+          ttlSeconds,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        stackTrace: error instanceof Error ? error.stack : undefined,
+      });
     }
   }
 
@@ -90,6 +142,17 @@ export class CacheService implements OnModuleInit {
       return value;
     } catch (error) {
       this.logger.error(`Failed to retrieve key ${key}:`, error);
+      await this.systemLogService.logSystem({
+        logLevel: LogSeverity.ERROR,
+        category: SystemLogCategory.CACHE,
+        serviceName: 'CacheService',
+        message: 'Redis GET operation failed',
+        details: {
+          key,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        stackTrace: error instanceof Error ? error.stack : undefined,
+      });
       return null;
     }
   }

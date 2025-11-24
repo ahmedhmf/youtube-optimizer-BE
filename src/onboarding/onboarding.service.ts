@@ -9,13 +9,10 @@ import {
   CompleteFirstAnalysisDto,
   UpdatePreferencesDto,
   OnboardingProgressResponse,
-} from '../DTO/onboarding.dto';
-// Audit logging will be integrated later
-// import { AuditLoggingService } from './audit-logging.service';
-// import { AuditEventType } from './types/audit-event.type';
-// import { AuditEventCategory } from './types/audit-event-category.type';
-// import { AuditSeverity } from './types/audit-severity.type';
-// import { AuditStatus } from './types/audit-status.type';
+} from './dto/onboarding.dto';
+import { UserLogService } from 'src/logging/services/user-log.service';
+import { LogSeverity, LogType } from 'src/logging/dto/log.types';
+import { LogAggregatorService } from 'src/logging/services/log-aggregator.service';
 
 interface OnboardingData {
   id?: string;
@@ -45,18 +42,17 @@ export class OnboardingService {
 
   constructor(
     private readonly supabaseService: SupabaseService,
-    // private readonly auditLoggingService: AuditLoggingService,
+    private readonly userLogService: UserLogService,
+    private readonly logAggregatorService: LogAggregatorService,
   ) {}
 
   async startOnboarding(
     userId: string,
     data: StartOnboardingDto,
-    _ipAddress?: string,
+    ipAddress?: string,
   ): Promise<OnboardingProgressResponse> {
     try {
       const client = this.supabaseService.getServiceClient();
-
-      // Check if user already has onboarding record
       const { data: existing } = (await client
         .from('user_onboarding')
         .select('*')
@@ -64,7 +60,6 @@ export class OnboardingService {
         .single()) as { data: OnboardingData | null; error: any };
 
       if (existing) {
-        // Update existing record
         const { error } = await client
           .from('user_onboarding')
           .update({
@@ -77,7 +72,6 @@ export class OnboardingService {
 
         return this.getOnboardingProgress(userId);
       } else {
-        // Create new onboarding record
         const onboardingData: Partial<OnboardingData> = {
           user_id: userId,
           current_step: OnboardingStep.USER_TYPE,
@@ -93,26 +87,33 @@ export class OnboardingService {
 
         if (error) throw error;
 
-        // Log onboarding start
-        // await this.auditLoggingService.logEvent({
-        //   userId,
-        //   eventType: AuditEventType.USER_ACTION,
-        //   eventCategory: AuditEventCategory.USER_ACTIVITY,
-        //   severity: AuditSeverity.INFO,
-        //   status: AuditStatus.SUCCESS,
-        //   ipAddress,
-        //   action: 'onboarding_started',
-        //   metadata: {
-        //     channelName: data.channelName,
-        //     step: OnboardingStep.WELCOME,
-        //   },
-        // });
-        this.logger.log(`Onboarding started for user ${userId}`);
-
+        await this.userLogService.logActivity({
+          userId,
+          logType: LogType.ACTIVITY,
+          activityType: 'onboarding_started',
+          description: `User started onboarding process for channel: ${data.channelName}`,
+          severity: LogSeverity.INFO,
+          ipAddress,
+          metadata: {
+            channelName: data.channelName,
+          },
+        });
         return this.getOnboardingProgress(userId);
       }
     } catch (error) {
       this.logger.error('Failed to start onboarding:', error);
+      await this.userLogService.logActivity({
+        userId,
+        logType: LogType.ACTIVITY,
+        activityType: 'onboarding_started',
+        description: `User started onboarding process for channel: ${data.channelName}`,
+        severity: LogSeverity.INFO,
+        ipAddress,
+        metadata: {
+          channelName: data.channelName,
+        },
+      });
+
       throw error;
     }
   }
@@ -120,10 +121,17 @@ export class OnboardingService {
   async updateUserType(
     userId: string,
     data: UpdateUserTypeDto,
-    _ipAddress?: string,
+    ipAddress?: string,
   ): Promise<OnboardingProgressResponse> {
     try {
       const client = this.supabaseService.getServiceClient();
+
+      // Get current onboarding data before update
+      const { data: currentData } = await client
+        .from('user_onboarding')
+        .select('user_type, content_categories, monthly_video_count')
+        .eq('user_id', userId)
+        .single();
 
       const updateData: Partial<OnboardingData> = {
         user_type: data.userType,
@@ -141,28 +149,59 @@ export class OnboardingService {
 
       if (error) throw error;
 
-      // Log user type selection
-      // await this.auditLoggingService.logEvent({
-      //   userId,
-      //   eventType: AuditEventType.USER_ACTION,
-      //   eventCategory: AuditEventCategory.USER_ACTIVITY,
-      //   severity: AuditSeverity.INFO,
-      //   status: AuditStatus.SUCCESS,
-      //   ipAddress,
-      //   action: 'user_type_selected',
-      //   metadata: {
-      //     userType: data.userType,
-      //     contentCategories: data.contentCategories,
-      //     monthlyVideoCount: data.monthlyVideoCount,
-      //   },
-      // });
-      this.logger.log(
-        `User type selected for user ${userId}: ${data.userType}`,
-      );
+      await this.userLogService.logActivity({
+        userId,
+        logType: LogType.ACTIVITY,
+        activityType: 'onboarding_step_completed',
+        description: `User completed onboarding step: ${updateData.current_step}`,
+        severity: LogSeverity.INFO,
+        ipAddress,
+        metadata: {
+          step: updateData.user_type,
+          currentStep: updateData.current_step,
+          totalSteps: updateData.completed_steps,
+        },
+      });
+
+      // Audit trail for user type update
+      await this.logAggregatorService.logAuditTrail({
+        actorId: userId,
+        actorEmail: 'self',
+        actorRole: 'user',
+        action: 'update_user_type',
+        entityType: 'user_onboarding',
+        entityId: userId,
+        oldValues: {
+          userType: currentData?.user_type || null,
+          contentCategories: currentData?.content_categories || [],
+          monthlyVideoCount: currentData?.monthly_video_count || null,
+        },
+        newValues: {
+          userType: data.userType,
+          contentCategories: data.contentCategories,
+          monthlyVideoCount: data.monthlyVideoCount,
+        },
+        changes: ['user_type', 'content_categories', 'monthly_video_count'],
+        ipAddress,
+        userAgent: 'unknown',
+        metadata: {
+          onboardingStep: OnboardingStep.USER_TYPE,
+          completedSteps: [OnboardingStep.WELCOME, OnboardingStep.USER_TYPE],
+        },
+      });
 
       return this.getOnboardingProgress(userId);
     } catch (error) {
       this.logger.error('Failed to update user type:', error);
+      await this.userLogService.logActivity({
+        userId,
+        logType: LogType.ERROR,
+        activityType: 'onboarding_step_update_failed',
+        description: `Failed to update onboarding step: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        severity: LogSeverity.ERROR,
+        ipAddress,
+        stackTrace: error instanceof Error ? error.stack : undefined,
+      });
       throw error;
     }
   }
@@ -170,7 +209,7 @@ export class OnboardingService {
   async completeFirstAnalysis(
     userId: string,
     data: CompleteFirstAnalysisDto,
-    _ipAddress: string,
+    ipAddress: string,
   ): Promise<OnboardingProgressResponse> {
     try {
       const client = this.supabaseService.getServiceClient();
@@ -194,22 +233,17 @@ export class OnboardingService {
 
       if (error) throw error;
 
-      // Log first analysis completion
-      // await this.auditLoggingService.logEvent({
-      //   userId,
-      //   eventType: AuditEventType.USER_ACTION,
-      //   eventCategory: AuditEventCategory.USER_ACTIVITY,
-      //   severity: AuditSeverity.INFO,
-      //   status: AuditStatus.SUCCESS,
-      //   ipAddress,
-      //   action: 'first_analysis_completed',
-      //   metadata: {
-      //     videoReference: data.videoReference,
-      //     rating: data.analysisRating,
-      //     feedback: data.feedback,
-      //   },
-      // });
-      this.logger.log(`First analysis completed for user ${userId}`);
+      await this.userLogService.logActivity({
+        userId,
+        logType: LogType.ACTIVITY,
+        activityType: 'onboarding_step_completed',
+        description: `User completed onboarding step: ${updateData.current_step}`,
+        severity: LogSeverity.INFO,
+        ipAddress,
+        metadata: {
+          step: updateData.first_analysis_completed,
+        },
+      });
 
       return this.getOnboardingProgress(userId);
     } catch (error) {
@@ -221,10 +255,17 @@ export class OnboardingService {
   async updatePreferences(
     userId: string,
     data: UpdatePreferencesDto,
-    _ipAddress: string,
+    ipAddress: string,
   ): Promise<OnboardingProgressResponse> {
     try {
       const client = this.supabaseService.getServiceClient();
+
+      // Get current preferences before update
+      const { data: currentData } = await client
+        .from('user_onboarding')
+        .select('preferences')
+        .eq('user_id', userId)
+        .single();
 
       const updateData: Partial<OnboardingData> = {
         preferences: {
@@ -252,25 +293,57 @@ export class OnboardingService {
 
       if (error) throw error;
 
-      // Log onboarding completion
-      // await this.auditLoggingService.logEvent({
-      //   userId,
-      //   eventType: AuditEventType.USER_ACTION,
-      //   eventCategory: AuditEventCategory.USER_ACTIVITY,
-      //   severity: AuditSeverity.INFO,
-      //   status: AuditStatus.SUCCESS,
-      //   ipAddress,
-      //   action: 'onboarding_completed',
-      //   metadata: {
-      //     preferences: data,
-      //     completedAt: new Date().toISOString(),
-      //   },
-      // });
-      this.logger.log(`Onboarding completed for user ${userId}`);
+      await this.userLogService.logActivity({
+        userId,
+        logType: LogType.ACTIVITY,
+        activityType: 'onboarding_completed',
+        description: `User completed onboarding`,
+        severity: LogSeverity.INFO,
+        ipAddress,
+        metadata: {
+          preferences: data,
+          completedAt: new Date().toISOString(),
+        },
+      });
+
+      // Audit trail for preferences update
+      await this.logAggregatorService.logAuditTrail({
+        actorId: userId,
+        actorEmail: 'self',
+        actorRole: 'user',
+        action: 'update_preferences',
+        entityType: 'user_onboarding',
+        entityId: userId,
+        oldValues: {
+          preferences: currentData?.preferences || {},
+        },
+        newValues: {
+          preferences: updateData.preferences,
+        },
+        changes: ['preferences', 'onboarding_completed'],
+        ipAddress,
+        userAgent: 'unknown',
+        metadata: {
+          onboardingStep: OnboardingStep.PREFERENCES,
+          onboardingCompleted: true,
+          completedAt: updateData.completed_at,
+        },
+      });
 
       return this.getOnboardingProgress(userId);
     } catch (error) {
-      this.logger.error('Failed to update preferences:', error);
+      await this.userLogService.logActivity({
+        userId,
+        logType: LogType.ERROR,
+        activityType: 'onboarding_completion_failed',
+        description: `Failed to complete onboarding: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        severity: LogSeverity.ERROR,
+        ipAddress,
+        metadata: {
+          preferences: data,
+          completedAt: new Date().toISOString(),
+        },
+      });
       throw error;
     }
   }
@@ -278,7 +351,7 @@ export class OnboardingService {
   async skipStep(
     userId: string,
     step: OnboardingStep,
-    _ipAddress: string,
+    ipAddress: string,
   ): Promise<OnboardingProgressResponse> {
     try {
       const progress = await this.getOnboardingProgress(userId);
@@ -298,26 +371,32 @@ export class OnboardingService {
 
         if (error) throw error;
 
-        // Log step skip
-        // await this.auditLoggingService.logEvent({
-        //   userId,
-        //   eventType: AuditEventType.USER_ACTION,
-        //   eventCategory: AuditEventCategory.USER_ACTIVITY,
-        //   severity: AuditSeverity.INFO,
-        //   status: AuditStatus.SUCCESS,
-        //   ipAddress,
-        //   action: 'onboarding_step_skipped',
-        //   metadata: {
-        //     skippedStep: step,
-        //     nextStep,
-        //   },
-        // });
-        this.logger.log(`Step ${step} skipped for user ${userId}`);
+        await this.userLogService.logActivity({
+          userId,
+          logType: LogType.ACTIVITY,
+          activityType: 'onboarding_step_skipped',
+          description: `User skipped onboarding step ${step}`,
+          severity: LogSeverity.INFO,
+          ipAddress,
+          metadata: {
+            skippedStep: step,
+            nextStep,
+          },
+        });
       }
-
       return this.getOnboardingProgress(userId);
     } catch (error) {
-      this.logger.error('Failed to skip step:', error);
+      await this.userLogService.logActivity({
+        userId,
+        logType: LogType.ERROR,
+        activityType: 'onboarding_step_skip_failed',
+        description: `Failed to skip onboarding step ${step}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        severity: LogSeverity.ERROR,
+        ipAddress,
+        metadata: {
+          skippedStep: step,
+        },
+      });
       throw error;
     }
   }
@@ -328,18 +407,13 @@ export class OnboardingService {
     try {
       const client = this.supabaseService.getServiceClient();
 
-      const { data, error } = (await client
+      const { data } = (await client
         .from('user_onboarding')
         .select('*')
         .eq('user_id', userId)
         .single()) as { data: OnboardingData | null; error: any };
 
-      if (error && error.code !== 'PGRST116') {
-        throw error;
-      }
-
       if (!data) {
-        // Return initial state if no onboarding record exists
         return {
           currentStep: OnboardingStep.WELCOME,
           progressPercentage: 0,

@@ -33,6 +33,8 @@ import {
   FeatureRequestDto,
   UsageTrackingDto,
 } from '../DTO/feedback.dto';
+import { UserLogService } from '../logging/services/user-log.service';
+import { LogSeverity, LogType } from '../logging/dto/log.types';
 
 interface AuthenticatedRequest extends Request {
   user: {
@@ -46,7 +48,10 @@ interface AuthenticatedRequest extends Request {
 @Controller('feedback')
 @ApiBearerAuth('access-token')
 export class UserFeedbackController {
-  constructor(private readonly feedbackService: UserFeedbackService) {}
+  constructor(
+    private readonly feedbackService: UserFeedbackService,
+    private readonly userLogService: UserLogService,
+  ) {}
 
   @Post('submit')
   @UseGuards(JwtAuthGuard)
@@ -104,6 +109,23 @@ export class UserFeedbackController {
       },
       ipAddress,
     );
+
+    // Log feedback submission
+    await this.userLogService.logActivity({
+      userId: req.user.id,
+      logType: LogType.ACTIVITY,
+      activityType: 'user_feedback_submitted',
+      description: `User submitted ${feedbackDto.type} feedback: ${feedbackDto.title}`,
+      severity: LogSeverity.INFO,
+      ipAddress,
+      userAgent,
+      metadata: {
+        feedbackId: feedback.id,
+        feedbackType: feedbackDto.type,
+        priority: feedbackDto.priority,
+        title: feedbackDto.title,
+      },
+    });
 
     return {
       id: feedback.id,
@@ -163,6 +185,23 @@ export class UserFeedbackController {
       ipAddress,
     );
 
+    // Log feature request submission
+    await this.userLogService.logActivity({
+      userId: req.user.id,
+      logType: LogType.ACTIVITY,
+      activityType: 'user_feature_request_submitted',
+      description: `User submitted feature request: ${requestDto.featureName}`,
+      severity: LogSeverity.INFO,
+      ipAddress,
+      userAgent: req.headers['user-agent'] || 'unknown',
+      metadata: {
+        featureRequestId: featureRequest.id,
+        featureName: requestDto.featureName,
+        importance: requestDto.importance,
+        willingnessToPay: requestDto.willingnessToPay,
+      },
+    });
+
     return {
       id: featureRequest.id,
       message: 'Feature request submitted successfully',
@@ -216,6 +255,23 @@ export class UserFeedbackController {
       sessionId,
       ipAddress,
     );
+
+    // Log feature usage tracking
+    await this.userLogService.logActivity({
+      userId: req.user.id,
+      logType: LogType.ACTIVITY,
+      activityType: 'user_feature_usage_tracked',
+      description: `User used feature: ${usageDto.feature}`,
+      severity: LogSeverity.INFO,
+      ipAddress,
+      userAgent,
+      sessionId,
+      metadata: {
+        feature: usageDto.feature,
+        satisfaction: usageDto.satisfaction,
+        ...usageDto.metadata,
+      },
+    });
 
     return {
       message: 'Usage tracked successfully',
@@ -314,6 +370,27 @@ export class UserFeedbackController {
     @Req() req: AuthenticatedRequest,
   ) {
     await this.feedbackService.voteForFeature(req.user.id, featureId);
+    
+    // Log feature vote
+    const ipAddress =
+      (req.headers['x-forwarded-for'] as string) ||
+      (req.headers['x-real-ip'] as string) ||
+      'unknown';
+    const userAgent = req.headers['user-agent'] || 'unknown';
+    
+    await this.userLogService.logActivity({
+      userId: req.user.id,
+      logType: LogType.ACTIVITY,
+      activityType: 'user_feature_voted',
+      description: `User voted for feature request`,
+      severity: LogSeverity.INFO,
+      ipAddress,
+      userAgent,
+      metadata: {
+        featureId,
+      },
+    });
+    
     return {
       message: 'Vote recorded successfully',
       voted: true,
