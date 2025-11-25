@@ -805,6 +805,74 @@ export class AuthController {
     return this.authService.getProfile(req.user.id);
   }
 
+  @Get('profile/subscription')
+  @ApiOperation({
+    summary: 'Get User Profile with Subscription',
+    description: "Retrieves the authenticated user's profile with subscription information, usage statistics, and feature limits",
+  })
+  @ApiBearerAuth('access-token')
+  @ApiResponse({
+    status: 200,
+    description: 'Profile with subscription retrieved successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', example: 'uuid-123-456' },
+        email: { type: 'string', example: 'user@example.com' },
+        name: { type: 'string', example: 'John Doe' },
+        role: { type: 'string', example: 'user' },
+        picture: { type: 'string', example: 'https://example.com/avatar.jpg' },
+        provider: { type: 'string', example: 'google' },
+        createdAt: { type: 'string', format: 'date-time' },
+        updatedAt: { type: 'string', format: 'date-time' },
+        subscription: {
+          type: 'object',
+          properties: {
+            tier: { type: 'string', enum: ['free', 'pro', 'premium', 'enterprise'], example: 'pro' },
+            status: { type: 'string', enum: ['active', 'inactive', 'cancelled', 'past_due', 'trialing', 'paused'], example: 'active' },
+            currentPeriodStart: { type: 'string', format: 'date-time' },
+            currentPeriodEnd: { type: 'string', format: 'date-time' },
+            cancelAtPeriodEnd: { type: 'boolean', example: false },
+            trialEnd: { type: 'string', format: 'date-time', nullable: true },
+          },
+        },
+        usage: {
+          type: 'object',
+          properties: {
+            analysesUsed: { type: 'number', example: 45 },
+            analysesAllowed: { type: 'number', example: 100, description: '-1 for unlimited' },
+            usagePercentage: { type: 'number', example: 45 },
+          },
+        },
+        features: {
+          type: 'object',
+          properties: {
+            maxAnalysesPerMonth: { type: 'number', example: 100 },
+            maxChannelsPerUser: { type: 'number', example: 3 },
+            advancedAnalytics: { type: 'boolean', example: true },
+            prioritySupport: { type: 'boolean', example: false },
+            customBranding: { type: 'boolean', example: false },
+            apiAccess: { type: 'boolean', example: true },
+            bulkOperations: { type: 'boolean', example: false },
+            aiSuggestionsLimit: { type: 'number', example: 10 },
+            exportFeatures: { type: 'boolean', example: true },
+            integrations: { type: 'boolean', example: false },
+          },
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - Invalid JWT token',
+  })
+  @UseGuards(JwtAuthGuard)
+  async getProfileWithSubscription(
+    @Req() req: Request & { user: { id: string } },
+  ) {
+    return this.authService.getProfileWithSubscription(req.user.id);
+  }
+
   @Put('profile')
   @ApiOperation({
     summary: 'Update User Profile',

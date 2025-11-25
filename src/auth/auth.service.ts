@@ -27,11 +27,12 @@ import {
   TokenBlacklistService,
   BlacklistReason,
 } from './token-blacklist.service';
-import { User } from './types/user.interface';
+import { User, UserProfileWithSubscription } from './types/user.interface';
 import { Profile } from './types/profiles.type';
 import { AuthResponse } from './types/auth-response.type';
 import { RefreshTokens } from './types/refresh-token.type';
 import { SocialRegistration } from './types/social-registeration.type';
+import { TIER_FEATURES, SubscriptionTier } from '../DTO/subscription.dto';
 
 @Injectable()
 export class AuthService {
@@ -342,6 +343,100 @@ export class AuthService {
       createdAt: new Date(profile.created_at ?? ''),
       updatedAt: new Date(profile.updated_at ?? ''),
     };
+  }
+
+  async getProfileWithSubscription(userId: string): Promise<UserProfileWithSubscription> {
+    const client = this.supabase.getClient();
+    
+    try {
+      // Get basic profile
+      const { data: profile, error: profileError } = await client
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .single<Profile>();
+
+      if (profileError || !profile) {
+        throw new UnauthorizedException('Profile not found');
+      }
+
+      // Get active subscription
+      const { data: subscription, error: subError } = await client
+        .from('user_subscriptions')
+        .select('tier, status, current_period_start, current_period_end, cancel_at_period_end, trial_end')
+        .eq('user_id', userId)
+        .eq('status', 'active')
+        .maybeSingle();
+
+      // Default to FREE tier if no active subscription
+      const tier = subscription?.tier || SubscriptionTier.FREE;
+      const tierFeatures = TIER_FEATURES[tier];
+
+      // Calculate usage for current billing period
+      const periodStart = subscription?.current_period_start 
+        ? new Date(subscription.current_period_start)
+        : new Date(new Date().getFullYear(), new Date().getMonth(), 1); // Start of current month
+
+      const { count: analysesUsed, error: auditError } = await client
+        .from('audits')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .gte('created_at', periodStart.toISOString());
+
+      const analysesAllowed = tierFeatures.maxAnalysesPerMonth === -1 
+        ? -1 
+        : tierFeatures.maxAnalysesPerMonth;
+      
+      const usagePercentage = analysesAllowed === -1 
+        ? 0 
+        : Math.min(Math.round(((analysesUsed || 0) / analysesAllowed) * 100), 100);
+
+      return {
+        id: profile.id,
+        email: profile.email,
+        name: profile.name ?? '',
+        role: this.getUserRoleFromString(profile.role),
+        picture: profile.picture ?? '',
+        provider: this.getValidProvider(profile.provider),
+        createdAt: new Date(profile.created_at ?? ''),
+        updatedAt: new Date(profile.updated_at ?? ''),
+        subscription: subscription ? {
+          tier: subscription.tier,
+          status: subscription.status,
+          currentPeriodStart: subscription.current_period_start,
+          currentPeriodEnd: subscription.current_period_end,
+          cancelAtPeriodEnd: subscription.cancel_at_period_end || false,
+          trialEnd: subscription.trial_end || null,
+        } : {
+          tier: SubscriptionTier.FREE,
+          status: 'active',
+          currentPeriodStart: periodStart.toISOString(),
+          currentPeriodEnd: new Date(periodStart.getFullYear(), periodStart.getMonth() + 1, 0).toISOString(),
+          cancelAtPeriodEnd: false,
+          trialEnd: null,
+        },
+        usage: {
+          analysesUsed: analysesUsed || 0,
+          analysesAllowed,
+          usagePercentage,
+        },
+        features: {
+          maxAnalysesPerMonth: tierFeatures.maxAnalysesPerMonth,
+          maxChannelsPerUser: tierFeatures.maxChannelsPerUser,
+          advancedAnalytics: tierFeatures.advancedAnalytics,
+          prioritySupport: tierFeatures.prioritySupport,
+          customBranding: tierFeatures.customBranding,
+          apiAccess: tierFeatures.apiAccess,
+          bulkOperations: tierFeatures.bulkOperations,
+          aiSuggestionsLimit: tierFeatures.aiSuggestionsLimit,
+          exportFeatures: tierFeatures.exportFeatures,
+          integrations: tierFeatures.integrations,
+        },
+      };
+    } catch (error) {
+      this.logger.error('Failed to get profile with subscription:', error);
+      throw error;
+    }
   }
 
   async updateProfile(
