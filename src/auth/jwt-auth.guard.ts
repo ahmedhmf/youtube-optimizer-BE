@@ -4,30 +4,22 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import { TokenBlacklistService } from './token-blacklist.service';
+import { SupabaseService } from '../supabase/supabase.service';
 
 interface JwtUser {
   id: string;
   email: string;
-  iat?: number;
+  role?: string;
   [key: string]: any;
 }
 
 @Injectable()
 export class JwtAuthGuard extends AuthGuard('jwt') {
-  constructor(private readonly tokenBlacklistService: TokenBlacklistService) {
+  constructor(private readonly supabaseService: SupabaseService) {
     super();
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    // First, let the JWT strategy validate the token
-    const result = await super.canActivate(context);
-
-    if (!result) {
-      return false;
-    }
-
-    // Extract token from request
     const request = context.switchToHttp().getRequest();
     const token = this.extractTokenFromHeader(request);
 
@@ -35,25 +27,28 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       throw new UnauthorizedException('Token not found');
     }
 
-    // Check if token is blacklisted
-    const isBlacklisted =
-      await this.tokenBlacklistService.isTokenBlacklisted(token);
-    if (isBlacklisted) {
-      throw new UnauthorizedException('Token has been revoked');
+    // Validate token using Supabase Auth
+    const client = this.supabaseService.getClient();
+    const { data: { user }, error } = await client.auth.getUser(token);
+
+    if (error || !user) {
+      throw new UnauthorizedException('Invalid or expired token');
     }
 
-    // Check if user's token version is still valid (for bulk invalidation)
-    const user = request.user as JwtUser;
-    if (user?.id && user?.iat) {
-      const isVersionValid =
-        await this.tokenBlacklistService.isUserTokenVersionValid(
-          user.id,
-          user.iat,
-        );
-      if (!isVersionValid) {
-        throw new UnauthorizedException('Token has been invalidated');
-      }
-    }
+    // Get user profile from profiles table
+    const { data: profile } = await client
+      .from('profiles')
+      .select('*')
+      .eq('id', user.id)
+      .single();
+
+    // Attach user to request
+    request.user = {
+      id: user.id,
+      email: user.email ?? '',
+      role: profile?.role ?? 'user',
+      ...user.user_metadata,
+    };
 
     return true;
   }

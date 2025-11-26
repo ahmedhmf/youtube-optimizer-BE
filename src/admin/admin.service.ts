@@ -1,6 +1,5 @@
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { SupabaseService } from 'src/supabase/supabase.service';
-import { AccountLockoutService } from '../auth/account-lockout.service';
 import { LogAggregatorService } from '../logging/services/log-aggregator.service';
 import { SocialProvider } from '../auth/dto';
 import { UserRole } from '../auth/types/roles.types';
@@ -18,7 +17,6 @@ export class AdminService {
 
   constructor(
     private readonly supabase: SupabaseService,
-    private readonly accountLockoutService: AccountLockoutService,
     private readonly logAggregatorService: LogAggregatorService,
   ) {}
 
@@ -124,10 +122,6 @@ export class AdminService {
             .eq('user_id', userId)
             .then((res) => ({ count: res.count, error: res.error }));
 
-          // Check account lockout status
-          const lockoutStatus =
-            await this.accountLockoutService.checkLockoutStatus(profile.email);
-
           // Calculate onboarding progress
           const completedSteps = onboarding?.completed_steps?.length || 0;
           const totalSteps = 5; // Total onboarding steps
@@ -135,11 +129,9 @@ export class AdminService {
             (completedSteps / totalSteps) * 100,
           );
 
-          // Determine account status
+          // Determine account status (Supabase Auth handles lockouts now)
           let accountStatus: 'active' | 'locked' | 'inactive' = 'active';
-          if (lockoutStatus.isLocked) {
-            accountStatus = 'locked';
-          } else if (!lastSession?.last_activity) {
+          if (!lastSession?.last_activity) {
             accountStatus = 'inactive';
           }
 
@@ -415,13 +407,12 @@ export class AdminService {
         newValues.accountStatus = updateData.accountStatus;
         changes.push('account_status');
 
+        // Account lockout is now handled by Supabase Auth
+        // Admin can disable users through Supabase dashboard if needed
         if (updateData.accountStatus === 'locked') {
-          await this.accountLockoutService.lockAccount(
-            existingUser.email,
-            'Admin action',
+          this.logger.warn(
+            `Account lockout requested for ${existingUser.email} - use Supabase dashboard to disable user`,
           );
-        } else if (updateData.accountStatus === 'active') {
-          await this.accountLockoutService.unlockAccount(existingUser.email);
         }
       }
 

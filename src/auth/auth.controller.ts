@@ -17,7 +17,6 @@ import express from 'express';
 import * as crypto from 'crypto';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
-import { SessionSecurityService } from './session-security.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { CSRFGuard } from './guards/csrf.guard';
 import {
@@ -55,7 +54,6 @@ export class AuthController {
 
   constructor(
     private readonly authService: AuthService,
-    private readonly sessionSecurityService: SessionSecurityService,
     private readonly auditLoggingService: AuditLoggingService,
     private readonly passwordSecurityService: PasswordSecurityService,
     private readonly userLogService: UserLogService,
@@ -1715,32 +1713,12 @@ export class AuthController {
     @Res() res: express.Response,
   ): Promise<express.Response<any, Record<string, any>>> {
     try {
-      const result = await this.sessionSecurityService.refreshSession(req, res);
-
-      if (!result) {
-        throw new UnauthorizedException('Invalid or expired session');
-      }
-
-      // Extract user from request (set by session refresh if successful)
-      const user = (req as any).user;
-
-      // Log session token refresh if we have user info
-      if (user?.id) {
-        await this.userLogService.logActivity({
-          userId: user.id,
-          logType: LogType.ACTIVITY,
-          activityType: 'token_refreshed',
-          description: 'User refreshed authentication token via session',
-          severity: LogSeverity.INFO,
-          ipAddress: req.ip,
-          userAgent: req.get('user-agent'),
-          metadata: {
-            method: 'session_refresh',
-          },
-        });
-      }
-
-      return res.json(result);
+      // Supabase Auth handles session refresh now
+      // This endpoint is deprecated - use Supabase client-side refresh
+      return res.status(400).json({
+        error: 'Deprecated',
+        message: 'This endpoint is deprecated. Use Supabase Auth client-side refresh or POST /auth/refresh-with-token',
+      });
     } catch (error) {
       // Don't log here - GlobalExceptionFilter will log it
       throw new UnauthorizedException(
@@ -1783,10 +1761,9 @@ export class AuthController {
   })
   @UseGuards(JwtAuthGuard, CSRFGuard)
   async getUserSessions(@Req() req: Request & { user: { id: string } }) {
-    const sessions = await this.sessionSecurityService.getUserSessions(
-      req.user.id,
-    );
-    return { sessions };
+    // Supabase Auth doesn't expose session management
+    // Return empty array for now
+    return { sessions: [] };
   }
 
   @Post('logout-all')
@@ -1842,7 +1819,8 @@ export class AuthController {
     @Req() req: Request & { user: { id: string } },
     @Res() res: express.Response,
   ) {
-    await this.sessionSecurityService.revokeAllUserSessions(req.user.id);
+    // Supabase Auth signOut handles session invalidation
+    await this.authService.logout(req.user.id);
 
     // Log logout from all devices
     await this.userLogService.logActivity({
@@ -1934,60 +1912,12 @@ export class AuthController {
     @Req() req: Request & { user: { id: string } },
     @Res() res: express.Response,
   ): Promise<express.Response<any, Record<string, any>>> {
-    const ipAddress = (req as any).ip || 'unknown';
-    const userAgent = req.headers['user-agent'] || 'unknown';
-
-    // Get session details before revoking for audit trail
-    const sessionDetails =
-      await this.sessionSecurityService.getSessionDetails(sessionId);
-
-    // TODO: Verify session belongs to user
-    await this.sessionSecurityService.revokeSession(sessionId, res);
-
-    // Log session revocation
-    await this.userLogService.logActivity({
-      userId: req.user.id,
-      logType: LogType.SECURITY,
-      activityType: 'session_revoked',
-      description: `User revoked a specific session`,
-      severity: LogSeverity.WARNING,
-      ipAddress,
-      userAgent,
-      metadata: {
-        revokedSessionId: sessionId,
-      },
+    // Supabase Auth handles session management
+    // This endpoint is deprecated
+    return res.status(400).json({
+      error: 'Deprecated',
+      message: 'Session management is now handled by Supabase Auth',
     });
-
-    // Audit trail for session revocation
-    await this.logAggregatorService.logAuditTrail({
-      actorId: req.user.id,
-      actorEmail: (req.user as any).email || 'unknown',
-      actorRole: (req.user as any).role || 'user',
-      action: 'revoke_session',
-      entityType: 'user_session',
-      entityId: sessionId,
-      oldValues: {
-        sessionActive: true,
-        sessionId: sessionId,
-        deviceInfo: sessionDetails?.deviceInfo,
-        lastActivity: sessionDetails?.lastActivity,
-      },
-      newValues: {
-        sessionActive: false,
-        revokedAt: new Date().toISOString(),
-        revokedBy: req.user.id,
-      },
-      changes: ['session_revoked'],
-      ipAddress,
-      userAgent,
-      metadata: {
-        revokedSessionId: sessionId,
-        revocationMethod: 'manual',
-        revokedFromDevice: userAgent,
-      },
-    });
-
-    return res.json({ message: 'Session revoked successfully' });
   }
 
   /**

@@ -21,12 +21,6 @@ import {
 import { UserRole } from './types/roles.types';
 import { SocialAuthService } from './social-auth.service';
 import { SocialProvider, SocialUserInfo } from './dto/social-login.dto';
-import { AccountLockoutService } from './account-lockout.service';
-import { SessionSecurityService } from './session-security.service';
-import {
-  TokenBlacklistService,
-  BlacklistReason,
-} from './token-blacklist.service';
 import { User, UserProfileWithSubscription } from './types/user.interface';
 import { Profile } from './types/profiles.type';
 import { AuthResponse } from './types/auth-response.type';
@@ -43,9 +37,6 @@ export class AuthService {
     private readonly supabase: SupabaseService,
     private readonly jwtService: JwtService,
     private readonly socialAuthService: SocialAuthService,
-    private readonly accountLockoutService: AccountLockoutService,
-    private readonly sessionSecurityService: SessionSecurityService,
-    private readonly tokenBlacklistService: TokenBlacklistService,
     private readonly logAggregatorService: LogAggregatorService,
     private readonly emailService: EmailService,
   ) {}
@@ -53,61 +44,90 @@ export class AuthService {
   async register(registerDto: RegisterDto): Promise<AuthResponse> {
     const { email, password, name } = registerDto;
     const client = this.supabase.getClient();
-    const { data: existingUser, error: checkError } = await client
-      .from('profiles')
-      .select('id')
-      .eq('email', email)
-      .single<Profile>();
 
-    if (checkError && checkError.code !== 'PGRST116') {
-      throw new BadRequestException(`Database error: ${checkError.message}`);
+    // Use Supabase Auth to create user
+    const { data: authData, error: authError } = await client.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          name: name || email.split('@')[0],
+        },
+      },
+    });
+
+    if (authError) {
+      if (authError.message.includes('already registered')) {
+        throw new ConflictException('User with this email already exists');
+      }
+      throw new BadRequestException(`Registration failed: ${authError.message}`);
     }
 
-    if (existingUser) {
-      throw new ConflictException('User with this email already exists');
+    if (!authData.user) {
+      throw new BadRequestException('Registration failed: No user returned');
     }
 
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 12);
+    // Profile will be auto-created by the database trigger
+    // Wait a moment for the trigger to complete
+    await new Promise(resolve => setTimeout(resolve, 100));
 
-    // Generate a UUID for the new user
-    const userId = crypto.randomUUID();
-
-    // Create user profile
+    // Fetch the created profile
     const { data: profile, error: profileError } = await client
       .from('profiles')
-      .insert({
-        id: userId,
-        email,
-        name: name || email.split('@')[0],
-        password_hash: hashedPassword,
-        role: UserRole.USER, // Default role for new users
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
       .select()
+      .eq('id', authData.user.id)
       .single<Profile>();
 
     if (profileError) {
-      throw new BadRequestException(
-        `Profile creation failed: ${profileError.message}`,
-      );
+      this.logger.error('Profile not found after user creation:', profileError);
+      // Profile might not exist yet, create it manually
+      const { data: newProfile, error: createError } = await client
+        .from('profiles')
+        .insert({
+          id: authData.user.id,
+          email: authData.user.email,
+          name: name || email.split('@')[0],
+          role: UserRole.USER,
+          provider: 'email',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .select()
+        .single<Profile>();
+
+      if (createError) {
+        throw new BadRequestException(
+          `Profile creation failed: ${createError.message}`,
+        );
+      }
+      // Use the newly created profile
+      const finalProfile = newProfile;
+    } else {
+      // Use the fetched profile
+      const finalProfile = profile;
+    }
+
+    // Get the final profile (either fetched or created)
+    const { data: finalProfile, error: finalError } = await client
+      .from('profiles')
+      .select()
+      .eq('id', authData.user.id)
+      .single<Profile>();
+
+    if (finalError || !finalProfile) {
+      throw new BadRequestException('Failed to retrieve user profile');
     }
 
     const user: User = {
-      id: profile.id,
-      email: profile.email,
-      name: profile.name ?? '',
-      role: this.getUserRoleFromString(profile.role),
-      picture: profile.picture ?? '',
-      provider: this.getValidProvider(profile.provider),
-      createdAt: new Date(profile.created_at ?? ''),
-      updatedAt: new Date(profile.updated_at ?? ''),
+      id: finalProfile.id,
+      email: finalProfile.email,
+      name: finalProfile.name ?? '',
+      role: this.getUserRoleFromString(finalProfile.role),
+      picture: finalProfile.picture ?? '',
+      provider: this.getValidProvider(finalProfile.provider),
+      createdAt: new Date(finalProfile.created_at ?? ''),
+      updatedAt: new Date(finalProfile.updated_at ?? ''),
     };
-
-    const tokens = await this.generateTokens(user.id);
-
-    await this.storeRefreshToken(user.id, tokens.refreshToken);
 
     // Send welcome email (non-blocking)
     this.emailService
@@ -119,10 +139,12 @@ export class AuthService {
         );
       });
 
+    // Return Supabase tokens
     return {
-      ...tokens,
+      accessToken: authData.session?.access_token ?? '',
+      refreshToken: authData.session?.refresh_token ?? '',
       user,
-      expiresIn: this.getJwtExpirationTime(),
+      expiresIn: authData.session?.expires_in ?? 3600,
     };
   }
 
@@ -130,51 +152,25 @@ export class AuthService {
     const { email, password } = loginDto;
     const client = this.supabase.getClient();
 
-    // Check if account is locked
-    const lockoutStatus =
-      await this.accountLockoutService.checkLockoutStatus(email);
-    if (lockoutStatus.isLocked) {
-      throw new UnauthorizedException(
-        `Account temporarily locked. Try again after ${lockoutStatus.lockoutUntil?.toLocaleString()}. Too many failed login attempts.`,
-      );
+    // Use Supabase Auth to sign in
+    const { data: authData, error: authError } = await client.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (authError || !authData.user) {
+      throw new UnauthorizedException('Invalid credentials');
     }
 
-    // Get user by email
-    const { data: profile, error } = await client
+    // Get user profile
+    const { data: profile, error: profileError } = await client
       .from('profiles')
       .select('*')
-      .eq('email', email)
+      .eq('id', authData.user.id)
       .single<Profile>();
 
-    if (error || !profile) {
-      // Record failed attempt for invalid email
-      await this.accountLockoutService.recordFailedAttempt(email);
-      throw new UnauthorizedException('Invalid credentials');
-    }
-
-    if (!profile.password_hash) {
-      // Record failed attempt for missing password hash
-      await this.accountLockoutService.recordFailedAttempt(email);
-      throw new UnauthorizedException('Invalid credentials');
-    }
-
-    const isPasswordValid = await bcrypt.compare(
-      password,
-      profile.password_hash,
-    );
-    if (!isPasswordValid) {
-      // Record failed attempt for invalid password
-      const lockoutResult =
-        await this.accountLockoutService.recordFailedAttempt(email);
-
-      let errorMessage = 'Invalid credentials';
-      if (lockoutResult.isLocked) {
-        errorMessage = `Account locked after ${lockoutResult.totalFailedAttempts} failed attempts. Try again after ${lockoutResult.lockoutUntil?.toLocaleString()}.`;
-      } else if (lockoutResult.remainingAttempts <= 2) {
-        errorMessage = `Invalid credentials. ${lockoutResult.remainingAttempts} attempts remaining before account lockout.`;
-      }
-
-      throw new UnauthorizedException(errorMessage);
+    if (profileError || !profile) {
+      throw new UnauthorizedException('User profile not found');
     }
 
     const user: User = {
@@ -188,14 +184,6 @@ export class AuthService {
       updatedAt: new Date(profile.updated_at ?? ''),
     };
 
-    // Successful login - reset any lockout
-    await this.accountLockoutService.resetLockout(email);
-
-    const tokens = await this.generateTokens(user.id);
-
-    // Store refresh token
-    await this.storeRefreshToken(user.id, tokens.refreshToken);
-
     // Update last login
     await client
       .from('profiles')
@@ -205,79 +193,40 @@ export class AuthService {
       })
       .eq('id', user.id);
 
+    // Return Supabase tokens
     return {
-      ...tokens,
+      accessToken: authData.session?.access_token ?? '',
+      refreshToken: authData.session?.refresh_token ?? '',
       user,
-      expiresIn: this.getJwtExpirationTime(),
+      expiresIn: authData.session?.expires_in ?? 3600,
     };
   }
 
   /**
    * Enhanced login with session security (when request/response objects are available)
+   * Note: Now uses Supabase Auth directly
    */
   async loginWithSession(
     loginDto: LoginDto,
     request: express.Request,
     response: express.Response,
   ): Promise<AuthResponse> {
-    // First do the standard login to get/validate user
-    const standardResult = await this.login(loginDto);
-
-    // Now create secure session instead of returning JWT tokens
-    const sessionData = await this.sessionSecurityService.createSecureSession(
-      standardResult.user.id,
-      standardResult.user.email,
-      standardResult.user.role,
-      request,
-      response,
-    );
-
-    const jwtExpiresIn = this.getJwtExpirationTime();
-
-    // Return access token only (refresh token is in HTTP-only cookie)
-    return {
-      accessToken: sessionData.accessToken,
-      refreshToken: '', // Empty since it's in HTTP-only cookie
-      user: standardResult.user,
-      expiresIn: jwtExpiresIn,
-    };
+    // Use standard login which now returns Supabase tokens
+    return this.login(loginDto);
   }
 
   async logout(userId: string, token?: string): Promise<{ success: boolean }> {
-    try {
-      if (token) {
-        await this.tokenBlacklistService.blacklistToken(
-          token,
-          userId,
-          BlacklistReason.LOGOUT,
-        );
-      }
-
-      // Use session security service for proper cleanup
-      await this.sessionSecurityService.logout(userId);
-
-      return { success: true };
-    } catch (error) {
-      if (
-        token &&
-        !(error instanceof Error ? error.message?.includes('blacklist') : false)
-      ) {
-        try {
-          await this.tokenBlacklistService.blacklistToken(
-            token,
-            userId,
-            BlacklistReason.LOGOUT,
-          );
-        } catch (blacklistError) {
-          console.error('Fallback token blacklisting failed:', blacklistError);
-        }
-      }
-
-      // Fallback cleanup
-      const client = this.supabase.getClient();
-      await client.from('refresh_tokens').delete().eq('user_id', userId);
-      return { success: true };
+    const client = this.supabase.getClient();
+    
+    // Use Supabase Auth to sign out (invalidates all tokens)
+    const { error } = await client.auth.signOut();
+    
+    if (error) {
+      this.logger.error('Supabase logout error:', error);
+      throw new BadRequestException('Logout failed');
     }
+
+    return { success: true };
   }
 
   async refresh(refreshToken: string): Promise<{
@@ -287,45 +236,19 @@ export class AuthService {
   }> {
     const client = this.supabase.getClient();
 
-    // Validate refresh token
-    const { data: tokenData, error } = await client
-      .from('refresh_tokens')
-      .select('user_id, expires_at')
-      .eq('token', refreshToken)
-      .single<RefreshTokens>();
+    // Use Supabase Auth to refresh session
+    const { data, error } = await client.auth.refreshSession({
+      refresh_token: refreshToken,
+    });
 
-    if (error || !tokenData) {
-      throw new UnauthorizedException('Invalid refresh token');
-    }
-
-    // Check if token is expired
-    if (new Date(tokenData.expires_at) < new Date()) {
-      // Clean up expired token
-      await client.from('refresh_tokens').delete().eq('token', refreshToken);
-
-      throw new UnauthorizedException('Refresh token expired');
-    }
-
-    // Generate new access token
-    const accessToken = this.jwtService.sign({ sub: tokenData.user_id });
-
-    // Optionally generate new refresh token (rotate refresh tokens)
-    const shouldRotateRefreshToken = true;
-    let newRefreshToken: string | undefined;
-
-    if (shouldRotateRefreshToken) {
-      // Delete old refresh token
-      await client.from('refresh_tokens').delete().eq('token', refreshToken);
-
-      // Generate new refresh token
-      newRefreshToken = this.generateRefreshToken();
-      await this.storeRefreshToken(tokenData.user_id, newRefreshToken);
+    if (error || !data.session) {
+      throw new UnauthorizedException('Invalid or expired refresh token');
     }
 
     return {
-      accessToken,
-      refreshToken: newRefreshToken,
-      expiresIn: this.getJwtExpirationTime(),
+      accessToken: data.session.access_token,
+      refreshToken: data.session.refresh_token,
+      expiresIn: data.session.expires_in ?? 3600,
     };
   }
 
@@ -801,18 +724,12 @@ export class AuthService {
       };
     }
 
-    // Create secure session with session security service
-    const sessionData = await this.sessionSecurityService.createSecureSession(
-      user.id,
-      user.email,
-      user.role,
-      req,
-      res,
-    );
+    // Generate tokens (this method will be updated to use Supabase Auth later)
+    const tokens = await this.generateTokens(user.id);
+    await this.storeRefreshToken(user.id, tokens.refreshToken);
 
     return {
-      accessToken: sessionData.accessToken,
-      refreshToken: '', // Empty since it's in HTTP-only cookie
+      ...tokens,
       user,
       expiresIn: this.getJwtExpirationTime(),
     };
@@ -823,23 +740,8 @@ export class AuthService {
     request: any,
     response: any,
   ): Promise<AuthResponse> {
-    const standardResult = await this.socialLogin(socialLoginDto);
-
-    const sessionData = await this.sessionSecurityService.createSecureSession(
-      standardResult.user.id,
-      standardResult.user.email,
-      standardResult.user.role,
-      request,
-      response,
-    );
-
-    // Return access token only (refresh token is in HTTP-only cookie)
-    return {
-      accessToken: sessionData.accessToken,
-      refreshToken: '', // Empty since it's in HTTP-only cookie
-      user: standardResult.user,
-      expiresIn: this.getJwtExpirationTime(),
-    };
+    // Use standard social login which now returns Supabase tokens
+    return this.socialLogin(socialLoginDto);
   }
 
   /**
@@ -860,36 +762,17 @@ export class AuthService {
       .eq('email', email)
       .single();
 
-    if (profile) {
-      // Use Supabase Auth to generate reset token
-      const { data, error } = await client.auth.resetPasswordForEmail(email, {
+      if (profile) {
+      // Use Supabase Auth to send password reset email
+      // Supabase will send an email with a secure link
+      const { error } = await client.auth.resetPasswordForEmail(email, {
         redirectTo: `${process.env.FRONTEND_URL || 'http://localhost:4200'}/reset-password`,
       });
 
-      if (!error && data) {
-        // Send custom password reset email (non-blocking)
-        // Note: Supabase already sends an email, but we can send our custom one too
-        // You may want to disable Supabase's email and only use this one
-        const resetToken = crypto.randomBytes(32).toString('hex');
-
-        // Store the token in a password_reset_tokens table if you want to use custom tokens
-        // For now, we'll just send a notification email
-        this.emailService
-          .sendPasswordResetEmail(
-            profile.email,
-            profile.name || 'User',
-            resetToken,
-          )
-          .catch((error) => {
-            this.logger.error(
-              `Failed to send password reset email to ${profile.email}:`,
-              error,
-            );
-          });
+      if (error) {
+        this.logger.error('Failed to send password reset email:', error);
       }
-    }
-
-    // Always return success message (don't reveal if email exists)
+    }    // Always return success message (don't reveal if email exists)
     return {
       message: 'If this email exists, you will receive reset instructions.',
     };
@@ -940,15 +823,8 @@ export class AuthService {
         );
       }
 
-      // Blacklist all existing tokens for this user
-      await this.tokenBlacklistService.blacklistAllUserTokens(
-        user.id,
-        BlacklistReason.PASSWORD_CHANGE,
-      );
-
-      // Also invalidate refresh tokens
-      await this.invalidateAllUserTokens(user.id);
-
+      // Supabase Auth automatically invalidates all sessions on password change
+      
       // Send password changed confirmation email (non-blocking)
       if (profile?.email) {
         this.emailService
@@ -999,40 +875,23 @@ export class AuthService {
   }
 
   /**
-   * Blacklist token due to suspicious activity
-   * @param token The token to blacklist
+   * Sign out user due to suspicious activity
    * @param userId The user ID
    */
-  async blacklistTokenForSuspiciousActivity(
-    token: string,
-    userId: string,
-  ): Promise<void> {
-    await this.tokenBlacklistService.blacklistToken(
-      token,
-      userId,
-      BlacklistReason.SUSPICIOUS_ACTIVITY,
-    );
-  }
-
-  /**
-   * Blacklist all user tokens due to security breach
-   * @param userId The user ID
-   */
-  async blacklistAllTokensForSecurityBreach(userId: string): Promise<void> {
-    await this.tokenBlacklistService.blacklistAllUserTokens(
-      userId,
-      BlacklistReason.SECURITY_BREACH,
-    );
-  }
-
-  /**
-   * Invalidate all refresh tokens for a user
-   * @param userId The user ID
-   */
-  private async invalidateAllUserTokens(userId: string): Promise<void> {
+  async signOutForSuspiciousActivity(userId: string): Promise<void> {
     const client = this.supabase.getClient();
-    // Delete all refresh tokens for this user
-    await client.from('refresh_tokens').delete().eq('user_id', userId);
+    // Supabase Auth will invalidate all sessions
+    await client.auth.signOut();
+  }
+
+  /**
+   * Sign out all user sessions due to security breach
+   * @param userId The user ID
+   */
+  async signOutAllForSecurityBreach(userId: string): Promise<void> {
+    const client = this.supabase.getClient();
+    // Supabase Auth handles session invalidation
+    await client.auth.signOut();
   }
 
   private getUserRoleFromString(role: string | null): UserRole {

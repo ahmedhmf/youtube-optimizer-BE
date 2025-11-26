@@ -27,11 +27,6 @@ import { RequirePermissions } from '../auth/decorators/permissions.decorator';
 import { UserRole } from '../auth/types/roles.types';
 import { AuthService } from '../auth/auth.service';
 import { AccountLockoutService } from '../auth/account-lockout.service';
-import { LockoutCleanupService } from '../auth/lockout-cleanup.service';
-import {
-  TokenBlacklistService,
-  BlacklistReason,
-} from '../auth/token-blacklist.service';
 import { PaginationQueryDto } from '../DTO/pagination-query.dto';
 import { CSRFGuard } from '../auth/guards/csrf.guard';
 import { AdminService } from './admin.service';
@@ -49,9 +44,6 @@ export class AdminController {
   constructor(
     private readonly adminService: AdminService,
     private readonly authService: AuthService,
-    private readonly accountLockoutService: AccountLockoutService,
-    private readonly lockoutCleanupService: LockoutCleanupService,
-    private readonly tokenBlacklistService: TokenBlacklistService,
     private readonly userLogService: UserLogService,
     private readonly logAggregatorService: LogAggregatorService,
   ) {}
@@ -256,127 +248,14 @@ export class AdminController {
     };
   }
 
-  // Account Lockout Management Endpoints
-  @Get('lockouts/:identifier/status')
-  @RequirePermissions('canAccessAdminPanel')
-  @Throttle({ short: { ttl: 1000, limit: 10 } })
-  async getLockoutStatus(@Param('identifier') identifier: string) {
-    const status =
-      await this.accountLockoutService.checkLockoutStatus(identifier);
-    return {
-      identifier,
-      ...status,
-      config: this.accountLockoutService.getLockoutConfig(),
-    };
-  }
-
-  @Post('lockouts/:identifier/reset')
-  @RequirePermissions('canAccessAdminPanel')
-  @Throttle({ short: { ttl: 1000, limit: 5 } })
-  async resetLockout(@Param('identifier') identifier: string, @Req() req: any) {
-    // Get lockout status before reset
-    const lockoutStatus =
-      await this.accountLockoutService.checkLockoutStatus(identifier);
-
-    await this.accountLockoutService.resetLockout(identifier);
-
-    // Log lockout reset
-    await this.userLogService.logActivity({
-      userId: req.user.id,
-      logType: LogType.SECURITY,
-      activityType: 'admin_lockout_reset',
-      description: `Admin reset account lockout for ${identifier}`,
-      severity: LogSeverity.WARNING,
-      ipAddress: req.ip,
-      userAgent: req.get('user-agent'),
-      metadata: {
-        targetIdentifier: identifier,
-        adminId: req.user.id,
-      },
-    });
-
-    // Audit trail
-    await this.logAggregatorService.logAuditTrail({
-      actorId: req.user.id,
-      actorEmail: req.user.email,
-      actorRole: req.user.role,
-      action: 'reset_account_lockout',
-      entityType: 'account_lockout',
-      entityId: identifier,
-      oldValues: {
-        isLocked: lockoutStatus.isLocked,
-        totalFailedAttempts: lockoutStatus.totalFailedAttempts,
-        remainingAttempts: lockoutStatus.remainingAttempts,
-        lockoutUntil: lockoutStatus.lockoutUntil,
-      },
-      newValues: {
-        isLocked: false,
-        totalFailedAttempts: 0,
-        remainingAttempts: 3,
-        lockoutUntil: null,
-      },
-      changes: ['lockout_reset'],
-      ipAddress: req.ip,
-      userAgent: req.get('user-agent'),
-      metadata: {
-        identifier,
-        previousAttempts: lockoutStatus.totalFailedAttempts,
-      },
-    });
-
-    return {
-      message: `Lockout reset for ${identifier}`,
-      timestamp: new Date().toISOString(),
-    };
-  }
-
-  @Post('lockouts/cleanup')
-  @RequirePermissions('canAccessAdminPanel')
-  @Throttle({ short: { ttl: 10000, limit: 1 } }) // Very restrictive - once per 10 seconds
-  async cleanupExpiredLockouts(@Req() req: any) {
-    const cleanedCount = await this.lockoutCleanupService.manualCleanup();
-
-    // Log lockout cleanup
-    await this.userLogService.logActivity({
-      userId: req.user.id,
-      logType: LogType.ACTIVITY,
-      activityType: 'admin_lockouts_cleanup',
-      description: 'Admin performed expired lockouts cleanup',
-      severity: LogSeverity.INFO,
-      ipAddress: req.ip,
-      userAgent: req.get('user-agent'),
-      metadata: {
-        recordsRemoved: cleanedCount,
-        adminId: req.user.id,
-      },
-    });
-
-    return {
-      message: 'Lockout cleanup completed',
-      recordsRemoved: cleanedCount,
-      timestamp: new Date().toISOString(),
-    };
-  }
-
-  @Get('lockouts/config')
-  @RequirePermissions('canAccessAdminPanel')
-  getLockoutConfig() {
-    return {
-      config: this.accountLockoutService.getLockoutConfig(),
-      description: {
-        maxAttempts: 'Maximum failed attempts before lockout',
-        lockoutDurationMinutes: 'How long account stays locked',
-        resetWindowMinutes: 'Time window for attempt counting',
-      },
-    };
-  }
-
   @Get('tokens/blacklist/stats')
   @RequirePermissions('canAccessAdminPanel')
   async getBlacklistStats() {
-    const stats = await this.tokenBlacklistService.getBlacklistStats();
+    // Deprecated - Supabase Auth handles token management
     return {
-      ...stats,
+      message:
+        'Token blacklist feature removed - Supabase Auth handles token invalidation',
+      totalBlacklisted: 0,
       timestamp: new Date().toISOString(),
     };
   }
@@ -384,8 +263,8 @@ export class AdminController {
   @Get('tokens/blacklist/:userId')
   @RequirePermissions('canAccessAdminPanel')
   async getUserBlacklistedTokens(@Param('userId') userId: string) {
-    const tokens =
-      await this.tokenBlacklistService.getUserBlacklistedTokens(userId);
+    // Deprecated - Supabase Auth handles token management
+    const tokens = [];
     return {
       userId,
       blacklistedTokens: tokens,
@@ -393,82 +272,11 @@ export class AdminController {
     };
   }
 
-  @Post('tokens/blacklist/:userId/all')
-  @RequirePermissions('canAccessAdminPanel')
-  @Throttle({ short: { ttl: 30000, limit: 5 } }) // 5 times per 30 seconds
-  async blacklistAllUserTokens(
-    @Param('userId') userId: string,
-    @Req() req: any,
-    @Body('reason') reason?: string,
-  ) {
-    const blacklistReason =
-      reason === 'security_breach'
-        ? BlacklistReason.SECURITY_BREACH
-        : BlacklistReason.ADMIN_REVOKE;
-
-    // Get target user info
-    const targetUser = await this.adminService.getUserById(userId);
-
-    await this.tokenBlacklistService.blacklistAllUserTokens(
-      userId,
-      blacklistReason,
-    );
-
-    // Log token blacklisting
-    await this.userLogService.logActivity({
-      userId: req.user.id,
-      logType: LogType.SECURITY,
-      activityType: 'admin_tokens_blacklisted',
-      description: `Admin blacklisted all tokens for user`,
-      severity: LogSeverity.CRITICAL,
-      ipAddress: req.ip,
-      userAgent: req.get('user-agent'),
-      metadata: {
-        targetUserId: userId,
-        reason: blacklistReason,
-        adminId: req.user.id,
-      },
-    });
-
-    // Audit trail
-    await this.logAggregatorService.logAuditTrail({
-      actorId: req.user.id,
-      actorEmail: req.user.email,
-      actorRole: req.user.role,
-      action: 'blacklist_all_tokens',
-      entityType: 'user_tokens',
-      entityId: userId,
-      oldValues: {
-        hasActiveTokens: true,
-      },
-      newValues: {
-        allTokensBlacklisted: true,
-        reason: blacklistReason,
-        revokedAt: new Date().toISOString(),
-      },
-      changes: ['tokens_revoked'],
-      ipAddress: req.ip,
-      userAgent: req.get('user-agent'),
-      metadata: {
-        targetUserEmail: targetUser.email,
-        targetUserName: targetUser.name,
-        reason: blacklistReason,
-      },
-    });
-
-    return {
-      message: 'All tokens blacklisted for user',
-      userId,
-      reason: blacklistReason,
-      timestamp: new Date().toISOString(),
-    };
-  }
-
   @Post('tokens/cleanup')
   @RequirePermissions('canAccessAdminPanel')
   @Throttle({ short: { ttl: 60000, limit: 1 } }) // Once per minute
   async cleanupExpiredTokens(@Req() req: any) {
-    await this.tokenBlacklistService.cleanupExpiredTokens();
+    // Deprecated - Supabase Auth handles token cleanup automatically
 
     // Log token cleanup
     await this.userLogService.logActivity({
@@ -498,11 +306,8 @@ export class AdminController {
     const targetUser = await this.adminService.getUserById(userId);
     const oldStatus = targetUser.accountStatus;
 
-    // Blacklist all tokens for account disabled
-    await this.tokenBlacklistService.blacklistAllUserTokens(
-      userId,
-      BlacklistReason.ACCOUNT_DISABLED,
-    );
+    // Deprecated - Supabase Auth handles token invalidation
+    // Admin should use Supabase dashboard to disable user account
 
     // Log account disable
     await this.userLogService.logActivity({

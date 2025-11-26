@@ -7,18 +7,12 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './jwt.strategy';
-import { AdminController } from '../admin/admin.controller';
 import { RolesGuard } from './guards/roles.guard';
 import { SocialAuthService } from './social-auth.service';
-import { AccountLockoutService } from './account-lockout.service';
-import { LockoutCleanupService } from './lockout-cleanup.service';
-import { SessionSecurityService } from './session-security.service';
 import { SupabaseModule } from '../supabase/supabase.module';
 import { CSRFService } from '../common/csrf.service';
 import { CSRFGuard } from './guards/csrf.guard';
 import { CSRFController } from './csrf.controller';
-import { TokenBlacklistService } from './token-blacklist.service';
-import { TokenTestController } from './token-test.controller';
 import { CommonModule } from '../common/common.module';
 import { AdminService } from '../admin/admin.service';
 import { EmailModule } from '../email/email.module';
@@ -44,16 +38,12 @@ import { EmailModule } from '../email/email.module';
       inject: [ConfigService],
     }),
   ],
-  controllers: [AuthController, CSRFController, TokenTestController],
+  controllers: [AuthController, CSRFController],
   providers: [
     AuthService,
     JwtStrategy,
     RolesGuard,
     SocialAuthService,
-    AccountLockoutService,
-    LockoutCleanupService,
-    SessionSecurityService,
-    TokenBlacklistService,
     CSRFService,
     CSRFGuard,
     AdminService,
@@ -63,8 +53,6 @@ import { EmailModule } from '../email/email.module';
     JwtStrategy,
     RolesGuard,
     SocialAuthService,
-    AccountLockoutService,
-    TokenBlacklistService,
     PassportModule,
     AdminService,
   ],
