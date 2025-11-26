@@ -370,14 +370,14 @@ export class UserFeedbackController {
     @Req() req: AuthenticatedRequest,
   ) {
     await this.feedbackService.voteForFeature(req.user.id, featureId);
-    
+
     // Log feature vote
     const ipAddress =
       (req.headers['x-forwarded-for'] as string) ||
       (req.headers['x-real-ip'] as string) ||
       'unknown';
     const userAgent = req.headers['user-agent'] || 'unknown';
-    
+
     await this.userLogService.logActivity({
       userId: req.user.id,
       logType: LogType.ACTIVITY,
@@ -390,7 +390,7 @@ export class UserFeedbackController {
         featureId,
       },
     });
-    
+
     return {
       message: 'Vote recorded successfully',
       voted: true,

@@ -84,13 +84,24 @@ async function bootstrap() {
   // CSRF Protection Service (AFTER CORS and rate limiting)
   const csrfService = app.get(CSRFService);
   app.use((req: Request, res: Response, next: NextFunction) => {
-    // Skip CSRF for these endpoints
-    const skipCSRFPaths = ['/auth/refresh', '/auth/csrf-token', '/health'];
+    // Skip CSRF for public authentication endpoints and health check
+    const skipCSRFPaths = [
+      '/auth/register',
+      '/auth/login',
+      '/auth/refresh',
+      '/auth/forgot-password',
+      '/auth/reset-password',
+      '/auth/csrf-token',
+      '/auth/social/google',
+      '/auth/social/google/url',
+      '/auth/social/google/callback',
+      '/health',
+    ];
     if (skipCSRFPaths.some((path) => req.path === path)) {
       return next();
     }
 
-    // Apply CSRF middleware for other routes
+    // Apply CSRF middleware for authenticated routes
     return csrfService.middleware()(req, res, next);
   });
 

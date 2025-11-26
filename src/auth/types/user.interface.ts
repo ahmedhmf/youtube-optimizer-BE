@@ -1,6 +1,9 @@
 import { UserRole } from '../types/roles.types';
 import { SocialProvider } from '../dto/social-login.dto';
-import { SubscriptionTier, SubscriptionStatus } from '../../DTO/subscription.dto';
+import {
+  SubscriptionTier,
+  SubscriptionStatus,
+} from '../../DTO/subscription.dto';
 
 export interface User {
   id: string;

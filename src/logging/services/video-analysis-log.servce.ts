@@ -152,8 +152,7 @@ export class VideoAnalysisLogService {
       if (updates.stage !== undefined) updateData.stage = updates.stage;
       if (updates.progressPercentage !== undefined)
         updateData.progress_percentage = updates.progressPercentage;
-      if (updates.auditId !== undefined)
-        updateData.audit_id = updates.auditId;
+      if (updates.auditId !== undefined) updateData.audit_id = updates.auditId;
       if (updates.tokensConsumed !== undefined)
         updateData.tokens_consumed = updates.tokensConsumed;
       if (updates.promptTokens !== undefined)
@@ -186,7 +185,10 @@ export class VideoAnalysisLogService {
 
       this.logger.debug(`Updated video analysis log for video: ${videoId}`);
     } catch (error) {
-      this.logger.error('Error updating video analysis log by video ID:', error);
+      this.logger.error(
+        'Error updating video analysis log by video ID:',
+        error,
+      );
       throw error;
     }
   }

@@ -33,6 +33,7 @@ import { AuthResponse } from './types/auth-response.type';
 import { RefreshTokens } from './types/refresh-token.type';
 import { SocialRegistration } from './types/social-registeration.type';
 import { TIER_FEATURES, SubscriptionTier } from '../DTO/subscription.dto';
+import { EmailService } from '../email/email.service';
 
 @Injectable()
 export class AuthService {
@@ -46,6 +47,7 @@ export class AuthService {
     private readonly sessionSecurityService: SessionSecurityService,
     private readonly tokenBlacklistService: TokenBlacklistService,
     private readonly logAggregatorService: LogAggregatorService,
+    private readonly emailService: EmailService,
   ) {}
 
   async register(registerDto: RegisterDto): Promise<AuthResponse> {
@@ -106,6 +108,16 @@ export class AuthService {
     const tokens = await this.generateTokens(user.id);
 
     await this.storeRefreshToken(user.id, tokens.refreshToken);
+
+    // Send welcome email (non-blocking)
+    this.emailService
+      .sendWelcomeEmail(user.email, user.name || 'User')
+      .catch((error) => {
+        this.logger.error(
+          `Failed to send welcome email to ${user.email}:`,
+          error,
+        );
+      });
 
     return {
       ...tokens,
@@ -345,9 +357,11 @@ export class AuthService {
     };
   }
 
-  async getProfileWithSubscription(userId: string): Promise<UserProfileWithSubscription> {
+  async getProfileWithSubscription(
+    userId: string,
+  ): Promise<UserProfileWithSubscription> {
     const client = this.supabase.getClient();
-    
+
     try {
       // Get basic profile
       const { data: profile, error: profileError } = await client
@@ -363,7 +377,9 @@ export class AuthService {
       // Get active subscription
       const { data: subscription, error: subError } = await client
         .from('user_subscriptions')
-        .select('tier, status, current_period_start, current_period_end, cancel_at_period_end, trial_end')
+        .select(
+          'tier, status, current_period_start, current_period_end, cancel_at_period_end, trial_end',
+        )
         .eq('user_id', userId)
         .eq('status', 'active')
         .maybeSingle();
@@ -373,7 +389,7 @@ export class AuthService {
       const tierFeatures = TIER_FEATURES[tier];
 
       // Calculate usage for current billing period
-      const periodStart = subscription?.current_period_start 
+      const periodStart = subscription?.current_period_start
         ? new Date(subscription.current_period_start)
         : new Date(new Date().getFullYear(), new Date().getMonth(), 1); // Start of current month
 
@@ -383,13 +399,18 @@ export class AuthService {
         .eq('user_id', userId)
         .gte('created_at', periodStart.toISOString());
 
-      const analysesAllowed = tierFeatures.maxAnalysesPerMonth === -1 
-        ? -1 
-        : tierFeatures.maxAnalysesPerMonth;
-      
-      const usagePercentage = analysesAllowed === -1 
-        ? 0 
-        : Math.min(Math.round(((analysesUsed || 0) / analysesAllowed) * 100), 100);
+      const analysesAllowed =
+        tierFeatures.maxAnalysesPerMonth === -1
+          ? -1
+          : tierFeatures.maxAnalysesPerMonth;
+
+      const usagePercentage =
+        analysesAllowed === -1
+          ? 0
+          : Math.min(
+              Math.round(((analysesUsed || 0) / analysesAllowed) * 100),
+              100,
+            );
 
       return {
         id: profile.id,
@@ -400,21 +421,27 @@ export class AuthService {
         provider: this.getValidProvider(profile.provider),
         createdAt: new Date(profile.created_at ?? ''),
         updatedAt: new Date(profile.updated_at ?? ''),
-        subscription: subscription ? {
-          tier: subscription.tier,
-          status: subscription.status,
-          currentPeriodStart: subscription.current_period_start,
-          currentPeriodEnd: subscription.current_period_end,
-          cancelAtPeriodEnd: subscription.cancel_at_period_end || false,
-          trialEnd: subscription.trial_end || null,
-        } : {
-          tier: SubscriptionTier.FREE,
-          status: 'active',
-          currentPeriodStart: periodStart.toISOString(),
-          currentPeriodEnd: new Date(periodStart.getFullYear(), periodStart.getMonth() + 1, 0).toISOString(),
-          cancelAtPeriodEnd: false,
-          trialEnd: null,
-        },
+        subscription: subscription
+          ? {
+              tier: subscription.tier,
+              status: subscription.status,
+              currentPeriodStart: subscription.current_period_start,
+              currentPeriodEnd: subscription.current_period_end,
+              cancelAtPeriodEnd: subscription.cancel_at_period_end || false,
+              trialEnd: subscription.trial_end || null,
+            }
+          : {
+              tier: SubscriptionTier.FREE,
+              status: 'active',
+              currentPeriodStart: periodStart.toISOString(),
+              currentPeriodEnd: new Date(
+                periodStart.getFullYear(),
+                periodStart.getMonth() + 1,
+                0,
+              ).toISOString(),
+              cancelAtPeriodEnd: false,
+              trialEnd: null,
+            },
         usage: {
           analysesUsed: analysesUsed || 0,
           analysesAllowed,
@@ -826,19 +853,40 @@ export class AuthService {
     const { email } = forgotPasswordDto;
     const client = this.supabase.getClient();
 
-    // const { data: profile, error: profileError } = await client
-    //   .from('profiles')
-    //   .select('id, email')
-    //   .eq('email', email)
-    //   .single();
+    // Check if user exists (but don't reveal in response)
+    const { data: profile } = await client
+      .from('profiles')
+      .select('id, email, name')
+      .eq('email', email)
+      .single();
 
-    // Use Supabase Auth to send password reset email
-    const { error } = await client.auth.resetPasswordForEmail(email, {
-      redirectTo: `${process.env.FRONTEND_URL || 'http://localhost:4200'}/reset-password`,
-    });
+    if (profile) {
+      // Use Supabase Auth to generate reset token
+      const { data, error } = await client.auth.resetPasswordForEmail(email, {
+        redirectTo: `${process.env.FRONTEND_URL || 'http://localhost:4200'}/reset-password`,
+      });
 
-    if (error) {
-      throw new BadRequestException(`Password reset failed: ${error.message}`);
+      if (!error && data) {
+        // Send custom password reset email (non-blocking)
+        // Note: Supabase already sends an email, but we can send our custom one too
+        // You may want to disable Supabase's email and only use this one
+        const resetToken = crypto.randomBytes(32).toString('hex');
+
+        // Store the token in a password_reset_tokens table if you want to use custom tokens
+        // For now, we'll just send a notification email
+        this.emailService
+          .sendPasswordResetEmail(
+            profile.email,
+            profile.name || 'User',
+            resetToken,
+          )
+          .catch((error) => {
+            this.logger.error(
+              `Failed to send password reset email to ${profile.email}:`,
+              error,
+            );
+          });
+      }
     }
 
     // Always return success message (don't reveal if email exists)
@@ -877,7 +925,7 @@ export class AuthService {
       // Get user profile for audit trail
       const { data: profile } = await client
         .from('profiles')
-        .select('email, role')
+        .select('email, role, name')
         .eq('id', user.id)
         .single();
 
@@ -900,6 +948,18 @@ export class AuthService {
 
       // Also invalidate refresh tokens
       await this.invalidateAllUserTokens(user.id);
+
+      // Send password changed confirmation email (non-blocking)
+      if (profile?.email) {
+        this.emailService
+          .sendPasswordChangedEmail(profile.email, profile.name || 'User')
+          .catch((error) => {
+            this.logger.error(
+              `Failed to send password changed email to ${profile.email}:`,
+              error,
+            );
+          });
+      }
 
       // Log audit trail
       await this.logAggregatorService.logAuditTrail({

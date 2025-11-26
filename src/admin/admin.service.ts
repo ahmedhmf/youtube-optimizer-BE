@@ -282,7 +282,9 @@ export class AdminService {
           ? {
               currentStep: onboarding.current_step,
               progressPercentage: onboarding.progress_percentage || 0,
-              completedAt: onboarding.completed_at ? new Date(onboarding.completed_at) : undefined,
+              completedAt: onboarding.completed_at
+                ? new Date(onboarding.completed_at)
+                : undefined,
             }
           : undefined,
         picture: profile.picture,
@@ -341,7 +343,10 @@ export class AdminService {
         updated_at: new Date().toISOString(),
       };
 
-      if (updateData.email !== undefined && updateData.email !== existingUser.email) {
+      if (
+        updateData.email !== undefined &&
+        updateData.email !== existingUser.email
+      ) {
         // Check if email is already taken by another user
         const { data: emailCheck } = await client
           .from('profiles')
@@ -359,21 +364,30 @@ export class AdminService {
         changes.push('email');
       }
 
-      if (updateData.name !== undefined && updateData.name !== existingUser.name) {
+      if (
+        updateData.name !== undefined &&
+        updateData.name !== existingUser.name
+      ) {
         profileUpdates.name = updateData.name;
         oldValues.name = existingUser.name;
         newValues.name = updateData.name;
         changes.push('name');
       }
 
-      if (updateData.role !== undefined && updateData.role !== existingUser.role) {
+      if (
+        updateData.role !== undefined &&
+        updateData.role !== existingUser.role
+      ) {
         profileUpdates.role = updateData.role;
         oldValues.role = existingUser.role;
         newValues.role = updateData.role;
         changes.push('role');
       }
 
-      if (updateData.picture !== undefined && updateData.picture !== existingUser.picture) {
+      if (
+        updateData.picture !== undefined &&
+        updateData.picture !== existingUser.picture
+      ) {
         profileUpdates.picture = updateData.picture;
         oldValues.picture = existingUser.picture;
         newValues.picture = updateData.picture;
@@ -393,7 +407,10 @@ export class AdminService {
       }
 
       // Handle account status changes
-      if (updateData.accountStatus !== undefined && updateData.accountStatus !== existingUser.account_status) {
+      if (
+        updateData.accountStatus !== undefined &&
+        updateData.accountStatus !== existingUser.account_status
+      ) {
         oldValues.accountStatus = existingUser.account_status;
         newValues.accountStatus = updateData.accountStatus;
         changes.push('account_status');

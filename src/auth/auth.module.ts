@@ -21,12 +21,14 @@ import { TokenBlacklistService } from './token-blacklist.service';
 import { TokenTestController } from './token-test.controller';
 import { CommonModule } from '../common/common.module';
 import { AdminService } from '../admin/admin.service';
+import { EmailModule } from '../email/email.module';
 
 @Module({
   imports: [
     SupabaseModule,
     HttpModule,
     CommonModule,
+    EmailModule,
     ScheduleModule.forRoot(),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({

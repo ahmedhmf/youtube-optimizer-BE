@@ -14,9 +14,10 @@ import { TokenBlacklistService } from 'src/auth/token-blacklist.service';
 import { CSRFService } from 'src/common/csrf.service';
 import { AdminService } from './admin.service';
 import { JwtModule, JwtService } from '@nestjs/jwt';
+import { EmailModule } from 'src/email/email.module';
 
 @Module({
-  imports: [SupabaseModule, HttpModule, CommonModule, JwtModule],
+  imports: [SupabaseModule, HttpModule, CommonModule, EmailModule, JwtModule],
   controllers: [AdminController],
   providers: [
     AuthService,

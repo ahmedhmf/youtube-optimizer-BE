@@ -55,8 +55,9 @@ export class SocialAuthService {
   async exchangeGoogleCode(code: string): Promise<SocialUserInfo> {
     try {
       const clientId = this.configService.get<string>('GOOGLE_CLIENT_ID');
-      const clientSecret =
-        this.configService.get<string>('GOOGLE_CLIENT_SECRET');
+      const clientSecret = this.configService.get<string>(
+        'GOOGLE_CLIENT_SECRET',
+      );
       const redirectUri =
         this.configService.get<string>('GOOGLE_REDIRECT_URI') ||
         `${this.configService.get<string>('BACKEND_URL')}/auth/social/google`;
