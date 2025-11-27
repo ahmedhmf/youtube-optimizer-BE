@@ -9,6 +9,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { Request, Response, NextFunction } from 'express';
 import { EnvironmentService } from './common/environment.service';
+import { EnvValidationService } from './common/env-validation.service';
 import { CSRFService } from './common/csrf.service';
 import { ValidationAndSanitizationPipe } from './common/validation-sanitization.pipe';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
@@ -17,6 +18,10 @@ dotenv.config();
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+
+  // Validate environment variables on startup
+  const envValidationService = app.get(EnvValidationService);
+  envValidationService.validateEnvironment();
 
   // Get environment service from the application context
   const environmentService = app.get(EnvironmentService);
@@ -135,14 +140,56 @@ async function bootstrap() {
     });
   }
 
+  // Set global API version prefix (e.g., /api/v1/auth/login)
+  app.setGlobalPrefix('api/v1', {
+    exclude: [
+      'health', // Keep health check at root level for monitoring
+      'health/liveness', // Kubernetes liveness probe
+      'health/readiness', // Kubernetes readiness probe
+      'api', // Swagger docs at /api
+      'auth/social/google', // Google OAuth callback (must match GOOGLE_REDIRECT_URI)
+      'auth/social/github', // GitHub OAuth callback (if used)
+    ],
+  });
+
+  // Swagger/OpenAPI Documentation
   const config = new DocumentBuilder()
-    .setTitle('Descripta APIs')
-    .setDescription('The Descripta API description')
-    .setVersion('1.0')
-    .addTag('descripta')
+    .setTitle('YouTube Optimizer API')
+    .setDescription('YouTube video optimization API with AI-powered suggestions')
+    .setVersion('1.0.0')
+    .addBearerAuth(
+      {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+        name: 'Authorization',
+        description: 'Enter JWT token',
+        in: 'header',
+      },
+      'access-token',
+    )
+    .addApiKey(
+      {
+        type: 'apiKey',
+        name: 'X-CSRF-Token',
+        in: 'header',
+        description: 'CSRF protection token (get from /auth/csrf-token)',
+      },
+      'csrf-token',
+    )
+    .addTag('auth', 'Authentication & Authorization')
+    .addTag('youtube', 'YouTube Video Analysis')
+    .addTag('ai', 'AI Suggestions & Optimization')
+    .addTag('admin', 'Admin Management')
+    .addTag('logs', 'Logging & Monitoring')
+    .addTag('onboarding', 'User Onboarding')
     .build();
   const documentFactory = () => SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api', app, documentFactory);
+  SwaggerModule.setup('api/docs', app, documentFactory, {
+    customSiteTitle: 'YouTube Optimizer API Docs',
+    customfavIcon: 'https://nestjs.com/img/logo_text.svg',
+    customCss: '.swagger-ui .topbar { display: none }',
+  });
 
   await app.listen(environmentService.getPort());
 }

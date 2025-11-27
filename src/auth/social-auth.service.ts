@@ -60,7 +60,7 @@ export class SocialAuthService {
       );
       const redirectUri =
         this.configService.get<string>('GOOGLE_REDIRECT_URI') ||
-        `${this.configService.get<string>('BACKEND_URL')}/auth/social/google`;
+        `${this.configService.get<string>('BACKEND_URL')}/api/v1/auth/social/google`;
 
       // 1. Exchange authorization code for tokens
       const tokenResponse = await firstValueFrom(

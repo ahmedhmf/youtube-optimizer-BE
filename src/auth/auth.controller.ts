@@ -1004,7 +1004,7 @@ export class AuthController {
     const clientId = process.env.GOOGLE_CLIENT_ID;
     const redirectUri =
       process.env.GOOGLE_REDIRECT_URI ||
-      `${process.env.BACKEND_URL || 'http://localhost:3000'}/auth/social/google`;
+      `${process.env.BACKEND_URL || 'http://localhost:3000'}/api/v1/auth/social/google`;
 
     if (!clientId) {
       throw new BadRequestException('Google OAuth is not configured');

@@ -17,6 +17,7 @@ import { IPRateLimitController } from './ip-rate-limit.controller';
 import { UserFeedbackService } from './user-feedback.service';
 import { UserFeedbackController } from './user-feedback.controller';
 import { SupabaseModule } from '../supabase/supabase.module';
+import { EnvValidationService } from './env-validation.service';
 
 @Module({
   imports: [SupabaseModule, ConfigModule],
@@ -24,6 +25,7 @@ import { SupabaseModule } from '../supabase/supabase.module';
     SecurityConfigService,
     SecurityMiddleware,
     EnvironmentService,
+    EnvValidationService,
     InputSanitizationService,
     ValidationAndSanitizationPipe,
     AuditLoggingService,
@@ -50,6 +52,7 @@ import { SupabaseModule } from '../supabase/supabase.module';
     IPRateLimitMiddleware,
     UserFeedbackService,
     EnvironmentService,
+    EnvValidationService,
     InputSanitizationService,
     ValidationAndSanitizationPipe,
   ],

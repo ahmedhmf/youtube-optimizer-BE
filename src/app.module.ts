@@ -16,6 +16,7 @@ import { AdminModule } from './admin/admin.module';
 import { ApiUsageTrackerMiddleware } from './common/middleware/api-usage-tracker.middleware';
 import { LoggingModule } from './logging/logging.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
+import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { OnboardingModule } from './onboarding/onboarding.module';
     }),
     LoggingModule,
     CommonModule,
+    HealthModule,
     OnboardingModule,
     AuthModule,
     AuditModule,
