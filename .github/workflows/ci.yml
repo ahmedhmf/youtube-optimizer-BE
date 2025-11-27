@@ -173,42 +173,15 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # Deploy to Production (Railway/Render)
-  deploy:
-    name: Deploy to Production
-    runs-on: ubuntu-latest
-    needs: [docker]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    environment:
-      name: production
-      url: https://your-api-domain.com
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Deploy to Railway
-        run: |
-          curl -X POST ${{ secrets.RAILWAY_WEBHOOK_URL }}
-        continue-on-error: true
-
-      - name: Wait for deployment
-        run: sleep 30
-
-      - name: Health check
-        run: |
-          response=$(curl -s -o /dev/null -w "%{http_code}" https://your-api-domain.com/health)
-          if [ $response != "200" ]; then
-            echo "Health check failed with status $response"
-            exit 1
-          fi
-          echo "Health check passed!"
+  # Railway deploys automatically when you push to GitHub
+  # No manual deployment step needed - Railway watches your repo
+  # Just make sure your Railway project is connected to this GitHub repository
 
   # Notify on failure
   notify:
     name: Notify on Failure
     runs-on: ubuntu-latest
-    needs: [lint, test, security, build, docker, deploy]
+    needs: [lint, test, security, build, docker]
     if: failure()
     
     steps:
