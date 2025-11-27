@@ -15,14 +15,12 @@ import { CSRFGuard } from './guards/csrf.guard';
 import { CSRFController } from './csrf.controller';
 import { CommonModule } from '../common/common.module';
 import { AdminService } from '../admin/admin.service';
-import { EmailModule } from '../email/email.module';
 
 @Module({
   imports: [
     SupabaseModule,
     HttpModule,
     CommonModule,
-    EmailModule,
     ScheduleModule.forRoot(),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({

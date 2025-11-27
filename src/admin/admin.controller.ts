@@ -26,7 +26,6 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { RequirePermissions } from '../auth/decorators/permissions.decorator';
 import { UserRole } from '../auth/types/roles.types';
 import { AuthService } from '../auth/auth.service';
-import { AccountLockoutService } from '../auth/account-lockout.service';
 import { PaginationQueryDto } from '../DTO/pagination-query.dto';
 import { CSRFGuard } from '../auth/guards/csrf.guard';
 import { AdminService } from './admin.service';

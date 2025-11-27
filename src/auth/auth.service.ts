@@ -9,25 +9,21 @@ import express from 'express';
 import { JwtService } from '@nestjs/jwt';
 import { SupabaseService } from '../supabase/supabase.service';
 import { LogAggregatorService } from '../logging/services/log-aggregator.service';
-import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
 import {
   LoginDto,
   RegisterDto,
-  SocialLoginDto,
   ForgotPasswordDto,
   ResetPasswordDto,
+  ChangePasswordDto,
 } from './dto';
 import { UserRole } from './types/roles.types';
 import { SocialAuthService } from './social-auth.service';
-import { SocialProvider, SocialUserInfo } from './dto/social-login.dto';
+import { SocialProvider } from './dto/social-login.dto';
 import { User, UserProfileWithSubscription } from './types/user.interface';
 import { Profile } from './types/profiles.type';
 import { AuthResponse } from './types/auth-response.type';
-import { RefreshTokens } from './types/refresh-token.type';
-import { SocialRegistration } from './types/social-registeration.type';
 import { TIER_FEATURES, SubscriptionTier } from '../DTO/subscription.dto';
-import { EmailService } from '../email/email.service';
 
 @Injectable()
 export class AuthService {
@@ -38,7 +34,6 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly socialAuthService: SocialAuthService,
     private readonly logAggregatorService: LogAggregatorService,
-    private readonly emailService: EmailService,
   ) {}
 
   async register(registerDto: RegisterDto): Promise<AuthResponse> {
@@ -60,7 +55,9 @@ export class AuthService {
       if (authError.message.includes('already registered')) {
         throw new ConflictException('User with this email already exists');
       }
-      throw new BadRequestException(`Registration failed: ${authError.message}`);
+      throw new BadRequestException(
+        `Registration failed: ${authError.message}`,
+      );
     }
 
     if (!authData.user) {
@@ -69,7 +66,7 @@ export class AuthService {
 
     // Profile will be auto-created by the database trigger
     // Wait a moment for the trigger to complete
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 100));
 
     // Fetch the created profile
     const { data: profile, error: profileError } = await client
@@ -129,16 +126,6 @@ export class AuthService {
       updatedAt: new Date(finalProfile.updated_at ?? ''),
     };
 
-    // Send welcome email (non-blocking)
-    this.emailService
-      .sendWelcomeEmail(user.email, user.name || 'User')
-      .catch((error) => {
-        this.logger.error(
-          `Failed to send welcome email to ${user.email}:`,
-          error,
-        );
-      });
-
     // Return Supabase tokens
     return {
       accessToken: authData.session?.access_token ?? '',
@@ -153,10 +140,11 @@ export class AuthService {
     const client = this.supabase.getClient();
 
     // Use Supabase Auth to sign in
-    const { data: authData, error: authError } = await client.auth.signInWithPassword({
-      email,
-      password,
-    });
+    const { data: authData, error: authError } =
+      await client.auth.signInWithPassword({
+        email,
+        password,
+      });
 
     if (authError || !authData.user) {
       throw new UnauthorizedException('Invalid credentials');
@@ -206,21 +194,17 @@ export class AuthService {
    * Enhanced login with session security (when request/response objects are available)
    * Note: Now uses Supabase Auth directly
    */
-  async loginWithSession(
-    loginDto: LoginDto,
-    request: express.Request,
-    response: express.Response,
-  ): Promise<AuthResponse> {
+  async loginWithSession(loginDto: LoginDto): Promise<AuthResponse> {
     // Use standard login which now returns Supabase tokens
     return this.login(loginDto);
   }
 
   async logout(userId: string, token?: string): Promise<{ success: boolean }> {
     const client = this.supabase.getClient();
-    
+
     // Use Supabase Auth to sign out (invalidates all tokens)
     const { error } = await client.auth.signOut();
-    
+
     if (error) {
       this.logger.error('Supabase logout error:', error);
       throw new BadRequestException('Logout failed');
@@ -478,154 +462,6 @@ export class AuthService {
     }
   }
 
-  private async generateTokens(userId: string) {
-    // Get user profile to include role in token
-    const user = await this.getProfile(userId);
-    const accessToken = this.jwtService.sign({
-      sub: userId,
-      role: user.role,
-    });
-    const refreshToken = this.generateRefreshToken();
-
-    return {
-      accessToken,
-      refreshToken,
-    };
-  }
-
-  private generateRefreshToken(): string {
-    const token = this.jwtService.sign(
-      { type: 'refresh', random: Math.random() },
-      { expiresIn: '7d' },
-    );
-    return token;
-  }
-
-  private async storeRefreshToken(
-    userId: string,
-    refreshToken: string,
-  ): Promise<void> {
-    const client = this.supabase.getClient();
-
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7); // 7 days
-
-    await client.from('refresh_tokens').insert({
-      user_id: userId,
-      token: refreshToken,
-      expires_at: expiresAt.toISOString(),
-      created_at: new Date().toISOString(),
-    });
-  }
-
-  async socialLogin(socialLoginDto: SocialLoginDto): Promise<AuthResponse> {
-    let socialUserInfo: SocialUserInfo;
-    // Validate social provider token/code
-    if (socialLoginDto.provider === SocialProvider.GOOGLE) {
-      if (!socialLoginDto.token) {
-        throw new BadRequestException('Google token is required');
-      }
-      socialUserInfo = await this.socialAuthService.validateGoogleToken(
-        socialLoginDto.token,
-      );
-    } else {
-      throw new BadRequestException('Unsupported social provider');
-    }
-
-    const client = this.supabase.getClient();
-    const { data: existingUser } = await client
-      .from('profiles')
-      .select('*')
-      .eq('email', socialUserInfo.email)
-      .single<Profile>();
-
-    let user: User;
-
-    if (existingUser) {
-      const updateData: SocialRegistration = {
-        name: existingUser.name || socialUserInfo.name,
-        picture: socialUserInfo.picture,
-        updated_at: new Date().toISOString(),
-      };
-
-      if (existingUser.provider === 'email' || !existingUser.password_hash) {
-        updateData.provider = socialUserInfo.provider;
-      }
-
-      const { data: updatedProfile, error: updateError } = await client
-        .from('profiles')
-        .update(updateData)
-        .eq('id', existingUser.id)
-        .select()
-        .single<Profile>();
-
-      if (updateError) {
-        throw new BadRequestException(
-          `Failed to update user profile: ${updateError.message}`,
-        );
-      }
-
-      user = {
-        id: updatedProfile.id,
-        email: updatedProfile.email,
-        name: updatedProfile.name ?? socialUserInfo.name,
-        role: this.getUserRoleFromString(updatedProfile.role),
-        picture: updatedProfile.picture ?? socialUserInfo.picture,
-        provider: this.getValidProvider(updatedProfile.provider),
-        createdAt: new Date(updatedProfile.created_at ?? ''),
-        updatedAt: new Date(updatedProfile.updated_at ?? ''),
-      };
-    } else {
-      const userId = crypto.randomUUID();
-      const placeholderPasswordHash = await bcrypt.hash(
-        `social-login-${userId}-${Date.now()}`,
-        12,
-      );
-
-      const { data: newProfile, error: createError } = await client
-        .from('profiles')
-        .insert({
-          id: userId,
-          email: socialUserInfo.email,
-          name: socialUserInfo.name,
-          role: UserRole.USER,
-          picture: socialUserInfo.picture,
-          provider: socialUserInfo.provider,
-          password_hash: placeholderPasswordHash, // Required by database, but won't be used
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .select()
-        .single<Profile>();
-
-      if (createError) {
-        throw new BadRequestException(
-          `Failed to create user profile: ${createError.message}`,
-        );
-      }
-
-      user = {
-        id: newProfile.id,
-        email: newProfile.email,
-        name: newProfile.name ?? socialUserInfo.name,
-        role: this.getUserRoleFromString(newProfile.role),
-        picture: newProfile.picture ?? socialUserInfo.picture,
-        provider: this.getValidProvider(newProfile.provider),
-        createdAt: new Date(newProfile.created_at ?? ''),
-        updatedAt: new Date(newProfile.updated_at ?? ''),
-      };
-    }
-
-    const tokens = await this.generateTokens(user.id);
-    await this.storeRefreshToken(user.id, tokens.refreshToken);
-
-    return {
-      ...tokens,
-      user,
-      expiresIn: this.getJwtExpirationTime(),
-    };
-  }
-
   /**
    * Handle Google OAuth callback - exchange code for user info and create session
    */
@@ -641,7 +477,9 @@ export class AuthService {
     const googleUserInfo =
       await this.socialAuthService.exchangeGoogleCode(code);
 
-    this.logger.debug(`Google OAuth: Authenticated user ${googleUserInfo.email}`);
+    this.logger.debug(
+      `Google OAuth: Authenticated user ${googleUserInfo.email}`,
+    );
 
     // Step 2: Create or get existing user in Supabase Auth using admin API
     // Check if user exists first
@@ -667,19 +505,19 @@ export class AuthService {
       this.logger.debug(`User exists in Supabase Auth: ${userId}`);
 
       // Update user metadata with latest Google info
-      const { error: updateError } = await serviceClient.auth.admin.updateUserById(
-        userId,
-        {
+      const { error: updateError } =
+        await serviceClient.auth.admin.updateUserById(userId, {
           user_metadata: {
             name: googleUserInfo.name,
             picture: googleUserInfo.picture,
             provider: 'google',
           },
-        },
-      );
+        });
 
       if (updateError) {
-        this.logger.warn(`Failed to update user metadata: ${updateError.message}`);
+        this.logger.warn(
+          `Failed to update user metadata: ${updateError.message}`,
+        );
       }
     } else {
       // Create new user in Supabase Auth using admin API
@@ -764,12 +602,12 @@ export class AuthService {
     // Step 4: Create a session for the user
     // Generate a secure random password for OAuth users
     const tempPassword = crypto.randomBytes(32).toString('hex') + 'Aa1!';
-    
+
     // Set/update password using admin API (OAuth users need a password for signInWithPassword)
-    const { error: passwordError } = await serviceClient.auth.admin.updateUserById(
-      userId,
-      { password: tempPassword }
-    );
+    const { error: passwordError } =
+      await serviceClient.auth.admin.updateUserById(userId, {
+        password: tempPassword,
+      });
 
     if (passwordError) {
       this.logger.error(`Failed to set password: ${passwordError.message}`);
@@ -779,7 +617,7 @@ export class AuthService {
     }
 
     // Sign in with the password to get a valid session with tokens
-    const { data: signInData, error: signInError } = 
+    const { data: signInData, error: signInError } =
       await client.auth.signInWithPassword({
         email: googleUserInfo.email,
         password: tempPassword,
@@ -815,17 +653,9 @@ export class AuthService {
     };
   }
 
-  async socialLoginWithSession(
-    socialLoginDto: SocialLoginDto,
-    request: any,
-    response: any,
-  ): Promise<AuthResponse> {
-    // Use standard social login which now returns Supabase tokens
-    return this.socialLogin(socialLoginDto);
-  }
-
   /**
-   * Request password reset for a user using Supabase Auth
+   * Request password reset for a user using Supabase Auth (Forgot Password)
+   * Supabase will send an email with a reset link
    * @param forgotPasswordDto Contains the user's email
    * @returns Success message
    */
@@ -842,7 +672,7 @@ export class AuthService {
       .eq('email', email)
       .single();
 
-      if (profile) {
+    if (profile) {
       // Use Supabase Auth to send password reset email
       // Supabase will send an email with a secure link
       const { error } = await client.auth.resetPasswordForEmail(email, {
@@ -852,7 +682,9 @@ export class AuthService {
       if (error) {
         this.logger.error('Failed to send password reset email:', error);
       }
-    }    // Always return success message (don't reveal if email exists)
+    }
+
+    // Always return success message (don't reveal if email exists)
     return {
       message: 'If this email exists, you will receive reset instructions.',
     };
@@ -903,20 +735,6 @@ export class AuthService {
         );
       }
 
-      // Supabase Auth automatically invalidates all sessions on password change
-      
-      // Send password changed confirmation email (non-blocking)
-      if (profile?.email) {
-        this.emailService
-          .sendPasswordChangedEmail(profile.email, profile.name || 'User')
-          .catch((error) => {
-            this.logger.error(
-              `Failed to send password changed email to ${profile.email}:`,
-              error,
-            );
-          });
-      }
-
       // Log audit trail
       await this.logAggregatorService.logAuditTrail({
         actorId: user.id,
@@ -951,6 +769,92 @@ export class AuthService {
         throw error;
       }
       throw new BadRequestException('Failed to reset password');
+    }
+  }
+
+  /**
+   * Change password from user profile (requires old password verification)
+   * @param userId The authenticated user's ID
+   * @param changePasswordDto Contains current and new password
+   * @param ipAddress User's IP address
+   * @param userAgent User's browser/device info
+   * @returns Success message
+   */
+  async changePassword(
+    userId: string,
+    changePasswordDto: ChangePasswordDto,
+    ipAddress?: string,
+    userAgent?: string,
+  ): Promise<{ message: string }> {
+    const { currentPassword, newPassword } = changePasswordDto;
+    const client = this.supabase.getClient();
+
+    try {
+      // Get user profile
+      const { data: profile } = await client
+        .from('profiles')
+        .select('email, role, name')
+        .eq('id', userId)
+        .single();
+
+      if (!profile?.email) {
+        throw new BadRequestException('User profile not found');
+      }
+
+      // Verify current password by attempting to sign in
+      const { error: signInError } = await client.auth.signInWithPassword({
+        email: profile.email,
+        password: currentPassword,
+      });
+
+      if (signInError) {
+        throw new UnauthorizedException('Current password is incorrect');
+      }
+
+      // Update to new password using Supabase Auth
+      const { error: updateError } = await client.auth.updateUser({
+        password: newPassword,
+      });
+
+      if (updateError) {
+        throw new BadRequestException(
+          `Failed to update password: ${updateError.message}`,
+        );
+      }
+
+      // Log audit trail
+      await this.logAggregatorService.logAuditTrail({
+        actorId: userId,
+        actorEmail: profile.email,
+        actorRole: profile.role || 'user',
+        action: 'change_password',
+        entityType: 'user_credentials',
+        entityId: userId,
+        oldValues: {
+          passwordSet: true,
+        },
+        newValues: {
+          passwordChanged: true,
+          changedAt: new Date().toISOString(),
+        },
+        changes: ['password'],
+        ipAddress: ipAddress || 'unknown',
+        userAgent: userAgent || 'unknown',
+        metadata: {
+          changeMethod: 'profile_settings',
+          verifiedOldPassword: true,
+        },
+      });
+
+      return { message: 'Password changed successfully' };
+    } catch (error) {
+      if (
+        error instanceof UnauthorizedException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+      throw new BadRequestException('Failed to change password');
     }
   }
 
@@ -998,18 +902,5 @@ export class AuthService {
 
     // Default to 'email' for any invalid provider values
     return 'email';
-  }
-
-  private getJwtExpirationTime(): number {
-    // Option 1: Extract from JWT service configuration
-    // If you have JWT_EXPIRES_IN in your config
-    // const jwtConfig = this.jwtService['options']; // Access internal config
-
-    // Option 2: Hard-code based on your JWT configuration
-    return 900; // 15 minutes in seconds
-
-    // Option 3: Decode the actual token to get expiry
-    // const decoded = this.jwtService.decode(sessionData.accessToken);
-    // return decoded.exp - Math.floor(Date.now() / 1000);
   }
 }

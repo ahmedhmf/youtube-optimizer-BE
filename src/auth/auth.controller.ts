@@ -28,6 +28,7 @@ import {
   SocialProvider,
   ForgotPasswordDto,
   ResetPasswordDto,
+  ChangePasswordDto,
 } from './dto';
 import {
   ApiBearerAuth,
@@ -322,11 +323,7 @@ export class AuthController {
 
     try {
       // Use enhanced session security login
-      const result = await this.authService.loginWithSession(
-        loginDto,
-        req,
-        res,
-      );
+      const result = await this.authService.loginWithSession(loginDto);
 
       // Check password breach status after successful login
       const passwordCheck =
@@ -1037,202 +1034,6 @@ export class AuthController {
     };
   }
 
-  @Post('social/google')
-  @ApiOperation({
-    summary: 'Google OAuth Login',
-    description: `
-    Authenticates user via Google OAuth token.
-    
-    **Flow:**
-    1. Client obtains Google OAuth token
-    2. Send token to this endpoint
-    3. Server verifies token with Google
-    4. Creates/updates user account
-    5. Returns JWT tokens
-    `,
-  })
-  @ApiBody({
-    type: SocialLoginRequestDto,
-    examples: {
-      'Google Login': {
-        value: {
-          token: 'google_oauth_token_here',
-          provider: 'google',
-        },
-      },
-    },
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Google authentication successful',
-  })
-  @ApiResponse({
-    status: 400,
-    description: 'Invalid Google token',
-  })
-  async googleLogin(
-    @Body() body: SocialLoginRequestDto,
-    @Req() req: express.Request,
-    @Res() res: express.Response,
-  ): Promise<express.Response<any, Record<string, any>>> {
-    const ipAddress = req.ip || 'unknown';
-    const userAgent = req.get('User-Agent') || 'unknown';
-
-    try {
-      if (!body.token) {
-        // Log missing token attempt
-        await this.auditLoggingService.logAuthEvent(
-          AuditEventType.LOGIN_FAILED,
-          undefined,
-          ipAddress,
-          userAgent,
-          {
-            provider: 'google',
-            error: 'Google token is required',
-            tokenProvided: false,
-          },
-          AuditStatus.FAILURE,
-        );
-        throw new BadRequestException('Google token is required');
-      }
-
-      // Use enhanced session security login
-      const result = await this.authService.socialLoginWithSession(
-        {
-          token: body.token,
-          provider: SocialProvider.GOOGLE,
-        },
-        req,
-        res,
-      );
-
-      // Log successful Google login
-      await this.auditLoggingService.logAuthEvent(
-        AuditEventType.LOGIN,
-        result.user?.id,
-        ipAddress,
-        userAgent,
-        {
-          provider: 'google',
-          loginMethod: 'social_session',
-          email: result.user?.email,
-        },
-        AuditStatus.SUCCESS,
-      );
-
-      // Log user activity for Google login
-      await this.userLogService.logActivity({
-        userId: result.user?.id,
-        logType: LogType.ACTIVITY,
-        activityType: 'user_login_social',
-        description: 'User logged in successfully via Google',
-        severity: LogSeverity.INFO,
-        ipAddress,
-        userAgent,
-        metadata: {
-          provider: 'google',
-          loginMethod: 'social_session',
-          email: result.user?.email,
-        },
-      });
-
-      return res.json(result);
-    } catch (sessionError) {
-      console.warn(
-        'Session security login failed, falling back to standard login:',
-        sessionError,
-      );
-
-      try {
-        // Fallback to regular login if session creation fails
-        const result = await this.authService.socialLogin({
-          token: body.token,
-          provider: SocialProvider.GOOGLE,
-        });
-
-        // Log successful Google login (fallback method)
-        await this.auditLoggingService.logAuthEvent(
-          AuditEventType.LOGIN,
-          result.user?.id,
-          ipAddress,
-          userAgent,
-          {
-            provider: 'google',
-            loginMethod: 'social_standard',
-            email: result.user?.email,
-            fallbackReason:
-              sessionError instanceof Error
-                ? sessionError.message
-                : String(sessionError),
-          },
-          AuditStatus.SUCCESS,
-        );
-
-        // Log user activity for Google login (fallback)
-        await this.userLogService.logActivity({
-          userId: result.user?.id,
-          logType: LogType.ACTIVITY,
-          activityType: 'user_login_social',
-          description: 'User logged in successfully via Google (fallback)',
-          severity: LogSeverity.INFO,
-          ipAddress,
-          userAgent,
-          metadata: {
-            provider: 'google',
-            loginMethod: 'social_standard',
-            email: result.user?.email,
-            fallbackReason:
-              sessionError instanceof Error
-                ? sessionError.message
-                : String(sessionError),
-          },
-        });
-
-        return res.json(result);
-      } catch (error) {
-        console.error('Google login error:', error);
-
-        // Log failed Google login attempt with detailed error information
-        await this.auditLoggingService.logAuthEvent(
-          AuditEventType.LOGIN_FAILED,
-          undefined,
-          ipAddress,
-          userAgent,
-          {
-            provider: 'google',
-            error: error instanceof Error ? error.message : String(error),
-            errorType:
-              error instanceof Error ? error.constructor.name : typeof error,
-            tokenProvided: !!body.token,
-            tokenLength: body.token?.length || 0,
-            sessionErrorMessage:
-              sessionError instanceof Error
-                ? sessionError.message
-                : String(sessionError),
-          },
-          AuditStatus.FAILURE,
-        );
-
-        // Log user activity for failed Google login
-        await this.userLogService.logActivity({
-          logType: LogType.SECURITY,
-          activityType: 'user_login_social_failed',
-          description: 'Google login attempt failed',
-          severity: LogSeverity.WARNING,
-          ipAddress,
-          userAgent,
-          metadata: {
-            provider: 'google',
-            error: error instanceof Error ? error.message : String(error),
-            tokenProvided: !!body.token,
-          },
-        });
-
-        throw error;
-      }
-    }
-  }
-
   @Get('social/google')
   @ApiOperation({
     summary: 'Google OAuth Callback',
@@ -1640,6 +1441,131 @@ export class AuthController {
         logType: LogType.SECURITY,
         activityType: 'password_reset_failed',
         description: 'Password reset attempt failed',
+        severity: LogSeverity.ERROR,
+        ipAddress,
+        userAgent,
+        metadata: {
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+
+      throw error;
+    }
+  }
+
+  @Put('change-password')
+  @ApiOperation({
+    summary: 'Change Password from Profile',
+    description: `
+  Allows authenticated users to change their password from profile settings.
+  
+  **Requirements:**
+  - User must be authenticated (JWT token)
+  - Current password for verification
+  - New password meeting security requirements
+  - CSRF protection
+  
+  **Security:**
+  - Verifies current password before allowing change
+  - Password strength validation
+  - All sessions remain active (user stays logged in)
+  - Audit trail logged
+  `,
+  })
+  @ApiBearerAuth('access-token')
+  @ApiSecurity('csrf-token', ['X-CSRF-Token'])
+  @ApiBody({
+    type: ChangePasswordDto,
+    description: 'Current and new password',
+    examples: {
+      'Change Password': {
+        value: {
+          currentPassword: 'OldPassword123!',
+          newPassword: 'NewSecurePassword123!',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Password changed successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string', example: 'Password changed successfully' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Current password is incorrect or user not authenticated',
+    schema: {
+      type: 'object',
+      properties: {
+        statusCode: { type: 'number', example: 401 },
+        message: {
+          type: 'string',
+          example: 'Current password is incorrect',
+        },
+        error: { type: 'string', example: 'Unauthorized' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Password validation failed',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'CSRF token required',
+  })
+  @UseGuards(JwtAuthGuard, CSRFGuard)
+  @Throttle({ default: { limit: 5, ttl: 300000 } }) // 5 attempts per 5 minutes
+  async changePassword(
+    @Body() changePasswordDto: ChangePasswordDto,
+    @Req() req: express.Request & { user: { id: string } },
+  ) {
+    const ipAddress = req.ip || req.connection.remoteAddress;
+    const userAgent = req.get('user-agent');
+
+    try {
+      // Validate password security before change
+      await this.passwordSecurityService.validatePasswordChange(
+        changePasswordDto.newPassword,
+        req.user.id,
+        ipAddress,
+        userAgent,
+      );
+
+      const result = await this.authService.changePassword(
+        req.user.id,
+        changePasswordDto,
+        ipAddress,
+        userAgent,
+      );
+
+      // Log successful password change
+      await this.userLogService.logActivity({
+        userId: req.user.id,
+        logType: LogType.SECURITY,
+        activityType: 'password_changed',
+        description: 'User changed password from profile settings',
+        severity: LogSeverity.WARNING,
+        ipAddress,
+        userAgent,
+        metadata: {
+          changeMethod: 'profile_settings',
+        },
+      });
+
+      return result;
+    } catch (error) {
+      // Log failed password change
+      await this.userLogService.logActivity({
+        userId: req.user.id,
+        logType: LogType.SECURITY,
+        activityType: 'password_change_failed',
+        description: 'Password change attempt failed',
         severity: LogSeverity.ERROR,
         ipAddress,
         userAgent,
