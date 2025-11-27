@@ -46,6 +46,7 @@ import { PasswordSecurityService } from 'src/common/password-security.service';
 import { UserLogService } from 'src/logging/services/user-log.service';
 import { LogSeverity, LogType } from 'src/logging/dto/log.types';
 import { LogAggregatorService } from 'src/logging/services/log-aggregator.service';
+import { ref } from 'process';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -740,11 +741,22 @@ export class AuthController {
     description: 'Rate limit exceeded - too many refresh attempts',
   })
   @ApiSecurity('csrf-token', ['X-CSRF-Token'])
+  @UseGuards(CSRFGuard)
   async refresh(
     @Body() refreshDto: RefreshTokenDto,
     @Req() req: express.Request,
   ) {
-    const result = await this.authService.refresh(refreshDto.refreshToken);
+    // Get refresh token from body or cookies
+    const refreshToken =
+      refreshDto.refreshToken ||
+      req.cookies?.refresh_token ||
+      req.cookies?.refreshToken;
+
+    if (!refreshToken) {
+      throw new UnauthorizedException('Refresh token is required');
+    }
+
+    const result = await this.authService.refresh(refreshToken);
 
     // Log token refresh
     await this.userLogService.logActivity({
@@ -806,7 +818,8 @@ export class AuthController {
   @Get('profile/subscription')
   @ApiOperation({
     summary: 'Get User Profile with Subscription',
-    description: "Retrieves the authenticated user's profile with subscription information, usage statistics, and feature limits",
+    description:
+      "Retrieves the authenticated user's profile with subscription information, usage statistics, and feature limits",
   })
   @ApiBearerAuth('access-token')
   @ApiResponse({
@@ -826,8 +839,23 @@ export class AuthController {
         subscription: {
           type: 'object',
           properties: {
-            tier: { type: 'string', enum: ['free', 'pro', 'premium', 'enterprise'], example: 'pro' },
-            status: { type: 'string', enum: ['active', 'inactive', 'cancelled', 'past_due', 'trialing', 'paused'], example: 'active' },
+            tier: {
+              type: 'string',
+              enum: ['free', 'pro', 'premium', 'enterprise'],
+              example: 'pro',
+            },
+            status: {
+              type: 'string',
+              enum: [
+                'active',
+                'inactive',
+                'cancelled',
+                'past_due',
+                'trialing',
+                'paused',
+              ],
+              example: 'active',
+            },
             currentPeriodStart: { type: 'string', format: 'date-time' },
             currentPeriodEnd: { type: 'string', format: 'date-time' },
             cancelAtPeriodEnd: { type: 'boolean', example: false },
@@ -838,7 +866,11 @@ export class AuthController {
           type: 'object',
           properties: {
             analysesUsed: { type: 'number', example: 45 },
-            analysesAllowed: { type: 'number', example: 100, description: '-1 for unlimited' },
+            analysesAllowed: {
+              type: 'number',
+              example: 100,
+              description: '-1 for unlimited',
+            },
             usagePercentage: { type: 'number', example: 45 },
           },
         },
@@ -1304,10 +1336,9 @@ export class AuthController {
       const frontendCallbackUrl =
         process.env.FRONTEND_CALLBACK_URL ||
         'http://localhost:4200/auth/callback';
-      
-      // Encode the access token for URL safety and pass to frontend
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      const redirectUrl = `${frontendCallbackUrl}?success=true&state=${encodeURIComponent(String(state))}&access_token=${encodeURIComponent(String(result.accessToken))}`;
+
+      // Encode tokens for URL safety and pass to frontend
+      const redirectUrl = `${frontendCallbackUrl}?success=true&state=${encodeURIComponent(String(state))}&access_token=${encodeURIComponent(String(result.accessToken))}&refresh_token=${encodeURIComponent(String(result.refreshToken))}`;
 
       res.redirect(redirectUrl);
     } catch (error) {
@@ -1709,16 +1740,37 @@ export class AuthController {
   @UseGuards(CSRFGuard)
   @Throttle({ default: { limit: 10, ttl: 60000 } }) // 10 attempts per minute
   async refreshToken(
+    @Body() refreshDto: RefreshTokenDto,
     @Req() req: express.Request,
-    @Res() res: express.Response,
-  ): Promise<express.Response<any, Record<string, any>>> {
+  ) {
     try {
-      // Supabase Auth handles session refresh now
-      // This endpoint is deprecated - use Supabase client-side refresh
-      return res.status(400).json({
-        error: 'Deprecated',
-        message: 'This endpoint is deprecated. Use Supabase Auth client-side refresh or POST /auth/refresh-with-token',
+      // Get refresh token from body or cookies
+      const refreshToken =
+        refreshDto.refreshToken ||
+        req.cookies?.refresh_token ||
+        req.cookies?.refreshToken;
+
+      if (!refreshToken) {
+        throw new UnauthorizedException('Refresh token is required');
+      }
+
+      const result = await this.authService.refresh(refreshToken);
+
+      // Log token refresh
+      await this.userLogService.logActivity({
+        userId: (result as any).user?.id,
+        logType: LogType.ACTIVITY,
+        activityType: 'token_refreshed',
+        description: 'User refreshed authentication token',
+        severity: LogSeverity.INFO,
+        ipAddress: req.ip,
+        userAgent: req.get('user-agent'),
+        metadata: {
+          method: 'refresh_token',
+        },
       });
+
+      return result;
     } catch (error) {
       // Don't log here - GlobalExceptionFilter will log it
       throw new UnauthorizedException(

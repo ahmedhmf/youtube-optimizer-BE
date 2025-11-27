@@ -634,104 +634,184 @@ export class AuthService {
     req: express.Request,
     res: express.Response,
   ): Promise<AuthResponse> {
-    // Exchange authorization code for user info
-    const socialUserInfo =
+    // Use service client with admin privileges
+    const serviceClient = this.supabase.getServiceClient();
+
+    // Step 1: Exchange authorization code with Google to get user info
+    const googleUserInfo =
       await this.socialAuthService.exchangeGoogleCode(code);
 
-    const client = this.supabase.getClient();
-    const { data: existingUser } = await client
-      .from('profiles')
-      .select('*')
-      .eq('email', socialUserInfo.email)
-      .single<Profile>();
+    this.logger.debug(`Google OAuth: Authenticated user ${googleUserInfo.email}`);
 
-    let user: User;
+    // Step 2: Create or get existing user in Supabase Auth using admin API
+    // Check if user exists first
+    const { data: existingUsers, error: listError } =
+      await serviceClient.auth.admin.listUsers();
+
+    if (listError) {
+      this.logger.error(`Failed to list users: ${listError.message}`);
+      throw new UnauthorizedException(
+        `Failed to check existing users: ${listError.message}`,
+      );
+    }
+
+    const existingUser = existingUsers.users.find(
+      (u) => u.email === googleUserInfo.email,
+    );
+
+    let userId: string;
+    let isNewUser = false;
 
     if (existingUser) {
-      // Update existing user
-      const updateData: SocialRegistration = {
-        name: existingUser.name || socialUserInfo.name,
-        picture: socialUserInfo.picture,
-        updated_at: new Date().toISOString(),
-      };
+      userId = existingUser.id;
+      this.logger.debug(`User exists in Supabase Auth: ${userId}`);
 
-      if (existingUser.provider === 'email' || !existingUser.password_hash) {
-        updateData.provider = socialUserInfo.provider;
-      }
-
-      const { data: updatedProfile, error: updateError } = await client
-        .from('profiles')
-        .update(updateData)
-        .eq('id', existingUser.id)
-        .select()
-        .single<Profile>();
+      // Update user metadata with latest Google info
+      const { error: updateError } = await serviceClient.auth.admin.updateUserById(
+        userId,
+        {
+          user_metadata: {
+            name: googleUserInfo.name,
+            picture: googleUserInfo.picture,
+            provider: 'google',
+          },
+        },
+      );
 
       if (updateError) {
+        this.logger.warn(`Failed to update user metadata: ${updateError.message}`);
+      }
+    } else {
+      // Create new user in Supabase Auth using admin API
+      const { data: newUser, error: createError } =
+        await serviceClient.auth.admin.createUser({
+          email: googleUserInfo.email,
+          email_confirm: true, // Email is already verified by Google
+          user_metadata: {
+            name: googleUserInfo.name,
+            picture: googleUserInfo.picture,
+            provider: 'google',
+          },
+        });
+
+      if (createError || !newUser.user) {
+        this.logger.error(`Failed to create user: ${createError?.message}`);
         throw new BadRequestException(
-          `Failed to update user profile: ${updateError.message}`,
+          `Failed to create user in Supabase Auth: ${createError?.message}`,
         );
       }
 
-      user = {
-        id: updatedProfile.id,
-        email: updatedProfile.email,
-        name: updatedProfile.name ?? socialUserInfo.name,
-        role: this.getUserRoleFromString(updatedProfile.role),
-        picture: updatedProfile.picture ?? socialUserInfo.picture,
-        provider: this.getValidProvider(updatedProfile.provider),
-        createdAt: new Date(updatedProfile.created_at ?? ''),
-        updatedAt: new Date(updatedProfile.updated_at ?? ''),
-      };
-    } else {
-      // Create new user
-      const userId = crypto.randomUUID();
-      const placeholderPasswordHash = await bcrypt.hash(
-        `social-login-${userId}-${Date.now()}`,
-        12,
-      );
+      userId = newUser.user.id;
+      isNewUser = true;
+      this.logger.debug(`Created new user in Supabase Auth: ${userId}`);
+    }
 
+    // Step 3: Get or create profile in profiles table
+    const client = this.supabase.getClient();
+    const { data: existingProfile, error: profileError } = await client
+      .from('profiles')
+      .select('*')
+      .eq('id', userId)
+      .maybeSingle();
+
+    let profile: Profile;
+
+    if (existingProfile) {
+      // Update existing profile
+      const { data: updatedProfile, error: updateError } = await client
+        .from('profiles')
+        .update({
+          name: googleUserInfo.name,
+          picture: googleUserInfo.picture,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', userId)
+        .select()
+        .single();
+
+      if (updateError) {
+        this.logger.warn(`Failed to update profile: ${updateError.message}`);
+        profile = existingProfile;
+      } else {
+        profile = updatedProfile;
+      }
+    } else {
+      // Create new profile (trigger should handle this, but create manually if needed)
       const { data: newProfile, error: createError } = await client
         .from('profiles')
         .insert({
           id: userId,
-          email: socialUserInfo.email,
-          name: socialUserInfo.name,
+          email: googleUserInfo.email,
+          name: googleUserInfo.name,
+          picture: googleUserInfo.picture,
+          provider: 'google',
           role: UserRole.USER,
-          picture: socialUserInfo.picture,
-          provider: socialUserInfo.provider,
-          password_hash: placeholderPasswordHash,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         })
         .select()
-        .single<Profile>();
+        .single();
 
-      if (createError) {
+      if (createError || !newProfile) {
         throw new BadRequestException(
-          `Failed to create user profile: ${createError.message}`,
+          `Failed to create profile: ${createError?.message}`,
         );
       }
 
-      user = {
-        id: newProfile.id,
-        email: newProfile.email,
-        name: newProfile.name ?? socialUserInfo.name,
-        role: this.getUserRoleFromString(newProfile.role),
-        picture: newProfile.picture ?? socialUserInfo.picture,
-        provider: this.getValidProvider(newProfile.provider),
-        createdAt: new Date(newProfile.created_at ?? ''),
-        updatedAt: new Date(newProfile.updated_at ?? ''),
-      };
+      profile = newProfile;
     }
 
-    // Generate tokens (this method will be updated to use Supabase Auth later)
-    const tokens = await this.generateTokens(user.id);
-    await this.storeRefreshToken(user.id, tokens.refreshToken);
+    // Step 4: Create a session for the user
+    // Generate a secure random password for OAuth users
+    const tempPassword = crypto.randomBytes(32).toString('hex') + 'Aa1!';
+    
+    // Set/update password using admin API (OAuth users need a password for signInWithPassword)
+    const { error: passwordError } = await serviceClient.auth.admin.updateUserById(
+      userId,
+      { password: tempPassword }
+    );
 
+    if (passwordError) {
+      this.logger.error(`Failed to set password: ${passwordError.message}`);
+      throw new UnauthorizedException(
+        `Failed to set password: ${passwordError.message}`,
+      );
+    }
+
+    // Sign in with the password to get a valid session with tokens
+    const { data: signInData, error: signInError } = 
+      await client.auth.signInWithPassword({
+        email: googleUserInfo.email,
+        password: tempPassword,
+      });
+
+    if (signInError || !signInData.session) {
+      this.logger.error(`Failed to sign in: ${signInError?.message}`);
+      throw new UnauthorizedException(
+        `Failed to create session: ${signInError?.message}`,
+      );
+    }
+
+    const session = signInData.session;
+
+    // Step 5: Create User object
+    const user: User = {
+      id: userId,
+      email: profile.email,
+      name: profile.name ?? googleUserInfo.name,
+      role: this.getUserRoleFromString(profile.role),
+      picture: profile.picture ?? '',
+      provider: this.getValidProvider(profile.provider ?? 'google'),
+      createdAt: new Date(profile.created_at ?? new Date().toISOString()),
+      updatedAt: new Date(profile.updated_at ?? new Date().toISOString()),
+    };
+
+    // Return Supabase Auth tokens
     return {
-      ...tokens,
+      accessToken: session.access_token,
+      refreshToken: session.refresh_token,
+      expiresIn: session.expires_in ?? 3600,
       user,
-      expiresIn: this.getJwtExpirationTime(),
     };
   }
 
