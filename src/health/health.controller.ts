@@ -59,7 +59,8 @@ export class HealthController {
   @Get()
   @ApiOperation({
     summary: 'Health Check',
-    description: 'Returns the health status of the application and its dependencies',
+    description:
+      'Returns the health status of the application and its dependencies',
   })
   @ApiResponse({
     status: 200,
@@ -80,11 +81,9 @@ export class HealthController {
     description: 'Service is unhealthy',
   })
   async check(): Promise<HealthCheckResponse> {
-    const startTime = Date.now();
-
     // Check all services
     const databaseStatus = await this.checkDatabase();
-    const redisStatus = await this.checkRedis();
+    const redisStatus = this.checkRedis();
     const memoryStatus = this.checkMemory();
     const cpuStatus = this.checkCPU();
 
@@ -186,7 +185,7 @@ export class HealthController {
     }
   }
 
-  private async checkRedis(): Promise<ServiceStatus> {
+  private checkRedis(): ServiceStatus {
     try {
       // Redis check would go here if you have a Redis service injected
       // For now, return a basic status

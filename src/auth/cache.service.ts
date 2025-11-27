@@ -34,7 +34,7 @@ export class CacheService implements OnModuleInit {
 
       this.client.on('connect', () => {
         this.logger.log('Connected to Redis server');
-        this.systemLogService.logSystem({
+        void this.systemLogService.logSystem({
           logLevel: LogSeverity.INFO,
           category: SystemLogCategory.CACHE,
           serviceName: 'CacheService',
@@ -45,7 +45,7 @@ export class CacheService implements OnModuleInit {
 
       this.client.on('disconnect', () => {
         this.logger.warn('Disconnected from Redis server');
-        this.systemLogService.logSystem({
+        void this.systemLogService.logSystem({
           logLevel: LogSeverity.WARNING,
           category: SystemLogCategory.CACHE,
           serviceName: 'CacheService',

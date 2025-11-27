@@ -24,8 +24,6 @@ import {
   RegisterDto,
   RefreshTokenDto,
   UpdateProfileDto,
-  SocialLoginRequestDto,
-  SocialProvider,
   ForgotPasswordDto,
   ResetPasswordDto,
   ChangePasswordDto,
@@ -47,7 +45,6 @@ import { PasswordSecurityService } from 'src/common/password-security.service';
 import { UserLogService } from 'src/logging/services/user-log.service';
 import { LogSeverity, LogType } from 'src/logging/dto/log.types';
 import { LogAggregatorService } from 'src/logging/services/log-aggregator.service';
-import { ref } from 'process';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -563,7 +560,7 @@ export class AuthController {
         if (userId) {
           // Blacklist the token
           try {
-            await this.authService.logout(userId, token);
+            await this.authService.logout();
 
             // Log successful logout with token blacklisting
             await this.auditLoggingService.logAuthEvent(
@@ -744,10 +741,12 @@ export class AuthController {
     @Req() req: express.Request,
   ) {
     // Get refresh token from body or cookies
-    const refreshToken =
+    const refreshToken: string = String(
       refreshDto.refreshToken ||
-      req.cookies?.refresh_token ||
-      req.cookies?.refreshToken;
+        req.cookies?.refresh_token ||
+        req.cookies?.refreshToken ||
+        '',
+    );
 
     if (!refreshToken) {
       throw new UnauthorizedException('Refresh token is required');
@@ -757,7 +756,7 @@ export class AuthController {
 
     // Log token refresh
     await this.userLogService.logActivity({
-      userId: (result as any).user?.id,
+      userId: (result as { user?: { id?: string } }).user?.id,
       logType: LogType.ACTIVITY,
       activityType: 'token_refreshed',
       description: 'User refreshed authentication token',
@@ -939,8 +938,10 @@ export class AuthController {
     @Req() req: Request & { user: { id: string } },
     @Body() updateProfileDto: UpdateProfileDto,
   ): Promise<User> {
-    const ipAddress = (req as any).ip || 'unknown';
-    const userAgent = req.headers['user-agent'] || 'unknown';
+    const ipAddress = String(
+      (req as unknown as express.Request).ip || 'unknown',
+    );
+    const userAgent = String(req.headers['user-agent'] || 'unknown');
 
     const result = await this.authService.updateProfile(
       req.user.id,
@@ -1078,7 +1079,9 @@ export class AuthController {
       // Check for OAuth errors from Google
       const error = req.query.error;
       if (error) {
-        const errorDescription = req.query.error_description || 'OAuth error';
+        const errorDescRaw = req.query.error_description;
+        const errorDescription =
+          typeof errorDescRaw === 'string' ? errorDescRaw : 'OAuth error';
         throw new BadRequestException(
           `Google OAuth error: ${errorDescription}`,
         );
@@ -1098,11 +1101,7 @@ export class AuthController {
       }
 
       // Exchange code for tokens and create user session
-      const result = await this.authService.handleGoogleCallback(
-        code,
-        req,
-        res,
-      );
+      const result = await this.authService.handleGoogleCallback(code);
 
       // Log successful Google OAuth login
       await this.auditLoggingService.logAuthEvent(
@@ -1671,10 +1670,12 @@ export class AuthController {
   ) {
     try {
       // Get refresh token from body or cookies
-      const refreshToken =
+      const refreshToken: string = String(
         refreshDto.refreshToken ||
-        req.cookies?.refresh_token ||
-        req.cookies?.refreshToken;
+          req.cookies?.refresh_token ||
+          req.cookies?.refreshToken ||
+          '',
+      );
 
       if (!refreshToken) {
         throw new UnauthorizedException('Refresh token is required');
@@ -1684,7 +1685,7 @@ export class AuthController {
 
       // Log token refresh
       await this.userLogService.logActivity({
-        userId: (result as any).user?.id,
+        userId: (result as { user?: { id?: string } }).user?.id,
         logType: LogType.ACTIVITY,
         activityType: 'token_refreshed',
         description: 'User refreshed authentication token',
@@ -1738,7 +1739,7 @@ export class AuthController {
     },
   })
   @UseGuards(JwtAuthGuard, CSRFGuard)
-  async getUserSessions(@Req() req: Request & { user: { id: string } }) {
+  getUserSessions() {
     // Supabase Auth doesn't expose session management
     // Return empty array for now
     return { sessions: [] };
@@ -1798,7 +1799,7 @@ export class AuthController {
     @Res() res: express.Response,
   ) {
     // Supabase Auth signOut handles session invalidation
-    await this.authService.logout(req.user.id);
+    await this.authService.logout();
 
     // Log logout from all devices
     await this.userLogService.logActivity({
@@ -1807,8 +1808,8 @@ export class AuthController {
       activityType: 'logout_all_devices',
       description: 'User logged out from all devices',
       severity: LogSeverity.WARNING,
-      ipAddress: (req as any).ip,
-      userAgent: req.headers['user-agent'] || 'unknown',
+      ipAddress: String((req as unknown as express.Request).ip || 'unknown'),
+      userAgent: String(req.headers['user-agent'] || 'unknown'),
       metadata: {
         reason: 'user_initiated',
       },
@@ -1892,10 +1893,12 @@ export class AuthController {
   ): Promise<express.Response<any, Record<string, any>>> {
     // Supabase Auth handles session management
     // This endpoint is deprecated
-    return res.status(400).json({
-      error: 'Deprecated',
-      message: 'Session management is now handled by Supabase Auth',
-    });
+    return Promise.resolve(
+      res.status(400).json({
+        error: 'Deprecated',
+        message: 'Session management is now handled by Supabase Auth',
+      }),
+    );
   }
 
   /**

@@ -4,7 +4,9 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+import { Request } from 'express';
 import { SupabaseService } from '../supabase/supabase.service';
+import { Profile } from './types/profiles.type';
 
 interface JwtUser {
   id: string;
@@ -20,7 +22,9 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const request = context.switchToHttp().getRequest();
+    const request = context
+      .switchToHttp()
+      .getRequest<Request & { user?: JwtUser }>();
     const token = this.extractTokenFromHeader(request);
 
     if (!token) {
@@ -29,7 +33,10 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
 
     // Validate token using Supabase Auth
     const client = this.supabaseService.getClient();
-    const { data: { user }, error } = await client.auth.getUser(token);
+    const {
+      data: { user },
+      error,
+    } = await client.auth.getUser(token);
 
     if (error || !user) {
       throw new UnauthorizedException('Invalid or expired token');
@@ -40,7 +47,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       .from('profiles')
       .select('*')
       .eq('id', user.id)
-      .single();
+      .single<Profile>();
 
     // Attach user to request
     request.user = {
@@ -53,15 +60,20 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     return true;
   }
 
-  handleRequest<TUser = JwtUser>(err: any, user: any): TUser {
+  handleRequest<TUser = JwtUser>(
+    err: Error | null,
+    user: JwtUser | null,
+  ): TUser {
     if (err || !user) {
       throw err || new UnauthorizedException('Invalid token');
     }
     return user as TUser;
   }
 
-  private extractTokenFromHeader(request: any): string | undefined {
-    const [type, token] = request.headers.authorization?.split(' ') ?? [];
+  private extractTokenFromHeader(request: Request): string | undefined {
+    const authHeader = request.headers.authorization;
+    if (!authHeader) return undefined;
+    const [type, token] = authHeader.split(' ');
     return type === 'Bearer' ? token : undefined;
   }
 }

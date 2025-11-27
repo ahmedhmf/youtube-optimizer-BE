@@ -10,6 +10,11 @@ import { Request, Response } from 'express';
 import { ErrorType, LogSeverity } from './dto/log.types';
 import { ErrorLogService } from './services/error-log.service';
 
+interface AuthenticatedRequest extends Request {
+  user?: { id: string };
+  requestId?: string;
+}
+
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(GlobalExceptionFilter.name);
@@ -32,14 +37,17 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       message =
         typeof exceptionResponse === 'string'
           ? exceptionResponse
-          : (exceptionResponse as any).message || message;
+          : (exceptionResponse as { message?: string }).message || message;
 
       // Map HTTP status to error type
-      if (status === 400) errorType = ErrorType.VALIDATION;
-      else if (status === 401) errorType = ErrorType.AUTHENTICATION;
-      else if (status === 403) errorType = ErrorType.AUTHORIZATION;
-      else if (status === 404) errorType = ErrorType.NOT_FOUND;
-      else if (status === 429) errorType = ErrorType.RATE_LIMIT;
+      if (status === HttpStatus.BAD_REQUEST) errorType = ErrorType.VALIDATION;
+      else if (status === HttpStatus.UNAUTHORIZED)
+        errorType = ErrorType.AUTHENTICATION;
+      else if (status === HttpStatus.FORBIDDEN)
+        errorType = ErrorType.AUTHORIZATION;
+      else if (status === HttpStatus.NOT_FOUND) errorType = ErrorType.NOT_FOUND;
+      else if (status === HttpStatus.TOO_MANY_REQUESTS)
+        errorType = ErrorType.RATE_LIMIT;
     } else if (exception instanceof Error) {
       message = exception.message;
 
@@ -56,7 +64,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       errorCode: `ERR_${status}`,
       errorType,
       message,
-      severity: status >= 500 ? LogSeverity.ERROR : LogSeverity.WARNING,
+      severity: Number(status) >= 500 ? LogSeverity.ERROR : LogSeverity.WARNING,
       stackTrace: exception instanceof Error ? exception.stack : undefined,
       context: {
         url: request.url,
@@ -64,13 +72,13 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         query: request.query,
         params: request.params,
       },
-      userId: (request as any).user?.id,
+      userId: (request as AuthenticatedRequest).user?.id,
       endpoint: request.path,
       method: request.method,
       statusCode: status,
       ipAddress: request.ip,
       userAgent: request.headers['user-agent'],
-      requestId: (request as any).requestId,
+      requestId: (request as AuthenticatedRequest).requestId,
     });
 
     // Send response

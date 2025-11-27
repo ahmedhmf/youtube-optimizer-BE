@@ -21,6 +21,7 @@ export interface RateLimitResult {
 
 export interface IPRateLimitRecord {
   ip_address: string;
+  endpoint: string;
   request_count: number;
   window_start: string;
   blocked_until?: string;
@@ -106,7 +107,7 @@ export class IPRateLimitService {
         .select('*')
         .eq('ip_address', ipAddress)
         .eq('endpoint', endpoint)
-        .single();
+        .single<IPRateLimitRecord>();
 
       if (selectError && selectError.code !== 'PGRST116') {
         // PGRST116 = no rows returned, which is fine for new IPs
@@ -375,12 +376,14 @@ export class IPRateLimitService {
       return { totalBlocked: 0, currentlyBlocked: 0, topOffenders: [] };
     }
 
-    const totalBlocked = stats.filter((s) => s.blocked_until).length;
-    const currentlyBlocked = stats.filter(
+    const typedStats = stats as IPRateLimitRecord[];
+
+    const totalBlocked = typedStats.filter((s) => s.blocked_until).length;
+    const currentlyBlocked = typedStats.filter(
       (s) => s.blocked_until && new Date(s.blocked_until) > now,
     ).length;
 
-    const topOffenders = stats.slice(0, 10).map((s) => ({
+    const topOffenders = typedStats.slice(0, 10).map((s) => ({
       ip: s.ip_address,
       requestCount: s.request_count,
       endpoint: s.endpoint,

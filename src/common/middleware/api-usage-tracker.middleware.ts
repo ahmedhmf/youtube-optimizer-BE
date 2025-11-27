@@ -3,26 +3,30 @@ import { Injectable, NestMiddleware, Logger } from '@nestjs/common';
 import { Request, Response, NextFunction } from 'express';
 import { SupabaseService } from '../../supabase/supabase.service';
 
+interface AuthenticatedRequest extends Request {
+  user?: { id: string };
+}
+
 @Injectable()
 export class ApiUsageTrackerMiddleware implements NestMiddleware {
   private readonly logger = new Logger(ApiUsageTrackerMiddleware.name);
 
   constructor(private readonly supabase: SupabaseService) {}
 
-  async use(req: Request, res: Response, next: NextFunction) {
+  use(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     const startTime = Date.now();
 
     // Capture the response
-    res.on('finish', async () => {
+    res.on('finish', () => {
       const responseTime = Date.now() - startTime;
-      const userId = (req as any).user?.id;
+      const userId = req.user?.id;
 
       // Only track if user is authenticated
       if (userId) {
         try {
           const client = this.supabase.getServiceClient();
 
-          await client.from('api_usage_logs').insert({
+          void client.from('api_usage_logs').insert({
             user_id: userId,
             endpoint: req.path,
             method: req.method,

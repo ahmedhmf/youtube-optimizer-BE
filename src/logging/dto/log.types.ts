@@ -54,7 +54,7 @@ export interface UserLogData {
   deviceId?: string;
   sessionId?: string;
   requestId?: string;
-  metadata?: any;
+  metadata?: Record<string, unknown>;
   stackTrace?: string;
 }
 
@@ -64,7 +64,7 @@ export interface ErrorLogData {
   message: string;
   severity?: LogSeverity;
   stackTrace?: string;
-  context?: any;
+  context?: Record<string, unknown>;
   userId?: string;
   endpoint?: string;
   method?: string;
@@ -93,8 +93,8 @@ export interface VideoAnalysisLogData {
   errorMessage?: string;
   errorCode?: string;
   retryCount?: number;
-  metadata?: any;
-  results?: any;
+  metadata?: Record<string, unknown>;
+  results?: Record<string, unknown>;
 }
 
 export interface ApiLogData {
@@ -109,16 +109,16 @@ export interface ApiLogData {
   ipAddress?: string;
   userAgent?: string;
   referrer?: string;
-  queryParams?: any;
-  requestBody?: any;
-  responseBody?: any;
-  headers?: any;
+  queryParams?: Record<string, unknown>;
+  requestBody?: Record<string, unknown>;
+  responseBody?: Record<string, unknown>;
+  headers?: Record<string, string>;
   errorMessage?: string;
   rateLimitHit?: boolean;
   cached?: boolean;
   sessionId?: string;
   deviceId?: string;
-  geographicalLocation?: any;
+  geographicalLocation?: Record<string, unknown>;
 }
 
 export interface SystemLogData {
@@ -126,7 +126,7 @@ export interface SystemLogData {
   category: SystemLogCategory;
   serviceName: string;
   message: string;
-  details?: any;
+  details?: Record<string, unknown>;
   stackTrace?: string;
   hostname?: string;
   processId?: number;
@@ -144,13 +144,13 @@ export interface AuditTrailData {
   action: string;
   entityType: string;
   entityId?: string;
-  oldValues?: any;
-  newValues?: any;
-  changes?: any;
+  oldValues?: Record<string, unknown>;
+  newValues?: Record<string, unknown>;
+  changes?: string[];
   ipAddress?: string;
   userAgent?: string;
   sessionId?: string;
   requestId?: string;
   reason?: string;
-  metadata?: any;
+  metadata?: Record<string, unknown>;
 }

@@ -204,7 +204,7 @@ export class LogAggregatorService {
   /**
    * Search across all log types
    */
-  async searchLogs(searchTerm: string, filters?: any) {
+  async searchLogs(searchTerm: string) {
     const client = this.supabase.getServiceClient();
 
     try {

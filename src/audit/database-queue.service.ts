@@ -263,7 +263,6 @@ export class DatabaseQueueService implements OnModuleInit {
     }
 
     this.isProcessing = true;
-    const startTime = Date.now();
 
     try {
       const client = this.supabase.getClient();
@@ -527,7 +526,7 @@ export class DatabaseQueueService implements OnModuleInit {
 
       await this.updateJobProgress(jobId.toString(), 20);
 
-      let result: any;
+      let result: AuditResponse;
 
       // Process based on job type
       switch (job.job_type) {
@@ -613,7 +612,7 @@ export class DatabaseQueueService implements OnModuleInit {
           stage: 'completed',
           progressPercentage: 100,
           auditId: savedAudit.data.id,
-          results: result,
+          results: result as unknown as Record<string, unknown>,
         });
       } catch (logError) {
         this.logger.warn(`Failed to update video analysis log: ${logError}`);

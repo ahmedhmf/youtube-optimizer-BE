@@ -15,7 +15,16 @@ import {
   ApiResponse,
   ApiBearerAuth,
 } from '@nestjs/swagger';
+import { Request } from 'express';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
+
+interface AuthenticatedRequest extends Request {
+  user: {
+    id: string;
+    email?: string;
+    role?: string;
+  };
+}
 import {
   LogQueryDto,
   SearchLogsDto,
@@ -93,12 +102,7 @@ export class LogsController {
   @ApiOperation({ summary: 'Search across all log types' })
   @ApiResponse({ status: 200, description: 'Search results retrieved' })
   async searchLogs(@Body() searchDto: SearchLogsDto) {
-    const results = await this.logAggregator.searchLogs(searchDto.searchTerm, {
-      startDate: searchDto.startDate
-        ? new Date(searchDto.startDate)
-        : undefined,
-      endDate: searchDto.endDate ? new Date(searchDto.endDate) : undefined,
-    });
+    const results = await this.logAggregator.searchLogs(searchDto.searchTerm);
 
     return {
       message: 'Search completed successfully',
@@ -211,7 +215,7 @@ export class LogsController {
   @ApiResponse({ status: 200, description: 'Error resolved successfully' })
   async resolveError(
     @Param('errorId') errorId: string,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
     @Body() resolveDto: ResolveErrorDto,
   ) {
     await this.errorLogService.resolveError(
@@ -227,8 +231,8 @@ export class LogsController {
       activityType: 'admin_error_resolved',
       description: 'Admin resolved an error log',
       severity: LogSeverity.INFO,
-      ipAddress: req.ip,
-      userAgent: req.headers['user-agent'] || 'unknown',
+      ipAddress: req.ip || 'unknown',
+      userAgent: String(req.headers['user-agent'] || 'unknown'),
       metadata: {
         errorId,
         resolutionNotes: resolveDto.resolutionNotes,
@@ -253,8 +257,8 @@ export class LogsController {
         resolutionNotes: resolveDto.resolutionNotes,
       },
       changes: ['status', 'resolution'],
-      ipAddress: req.ip,
-      userAgent: req.headers['user-agent'] || 'unknown',
+      ipAddress: req.ip || 'unknown',
+      userAgent: String(req.headers['user-agent'] || 'unknown'),
       metadata: {
         errorId,
         resolutionNotes: resolveDto.resolutionNotes,

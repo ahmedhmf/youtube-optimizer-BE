@@ -8,8 +8,14 @@ import {
 } from '@nestjs/common';
 import { Observable, throwError } from 'rxjs';
 import { catchError } from 'rxjs/operators';
+import { Request } from 'express';
 import { LogSeverity, ErrorType } from '../dto/log.types';
 import { ErrorLogService } from '../services/error-log.service';
+
+interface AuthenticatedRequest extends Request {
+  user?: { id: string };
+  requestId?: string;
+}
 
 @Injectable()
 export class ErrorLoggingInterceptor implements NestInterceptor {
@@ -18,13 +24,13 @@ export class ErrorLoggingInterceptor implements NestInterceptor {
   constructor(private readonly errorLogService: ErrorLogService) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
-    const request = context.switchToHttp().getRequest();
+    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     const requestId = request.requestId || `req_${Date.now()}`;
 
     return next.handle().pipe(
-      catchError((error) => {
+      catchError(async (error: Error & { status?: number }) => {
         // Log the error asynchronously
-        this.errorLogService.logError({
+        await this.errorLogService.logError({
           errorType: this.determineErrorType(error),
           message: error.message || 'Unknown error',
           severity: LogSeverity.ERROR,
@@ -47,10 +53,15 @@ export class ErrorLoggingInterceptor implements NestInterceptor {
     );
   }
 
-  private determineErrorType(error: any): ErrorType {
-    if (error.name?.includes('Validation')) return ErrorType.VALIDATION;
-    if (error.name?.includes('Database')) return ErrorType.DATABASE;
-    if (error.name?.includes('Auth')) return ErrorType.AUTHENTICATION;
+  private determineErrorType(
+    error: Error & { status?: number; name?: string },
+  ): ErrorType {
+    if (error.name && error.name.includes('Validation'))
+      return ErrorType.VALIDATION;
+    if (error.name && error.name.includes('Database'))
+      return ErrorType.DATABASE;
+    if (error.name && error.name.includes('Auth'))
+      return ErrorType.AUTHENTICATION;
     if (error.status === 401) return ErrorType.AUTHENTICATION;
     if (error.status === 403) return ErrorType.AUTHORIZATION;
     if (error.status === 404) return ErrorType.NOT_FOUND;

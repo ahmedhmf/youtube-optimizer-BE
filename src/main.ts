@@ -155,7 +155,9 @@ async function bootstrap() {
   // Swagger/OpenAPI Documentation
   const config = new DocumentBuilder()
     .setTitle('YouTube Optimizer API')
-    .setDescription('YouTube video optimization API with AI-powered suggestions')
+    .setDescription(
+      'YouTube video optimization API with AI-powered suggestions',
+    )
     .setVersion('1.0.0')
     .addBearerAuth(
       {
@@ -193,4 +195,4 @@ async function bootstrap() {
 
   await app.listen(environmentService.getPort());
 }
-bootstrap();
+void bootstrap();

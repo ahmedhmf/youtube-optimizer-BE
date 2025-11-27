@@ -123,7 +123,9 @@ export class FeatureRequestDto {
   @IsNotEmpty()
   @MinLength(5)
   @MaxLength(100)
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
   featureName: string;
 
   @ApiProperty({
@@ -137,7 +139,9 @@ export class FeatureRequestDto {
   @IsNotEmpty()
   @MinLength(20)
   @MaxLength(500)
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
   description: string;
 
   @ApiProperty({
@@ -151,7 +155,9 @@ export class FeatureRequestDto {
   @IsNotEmpty()
   @MinLength(10)
   @MaxLength(300)
-  @Transform(({ value }) => value?.trim())
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
   useCase: string;
 
   @ApiProperty({

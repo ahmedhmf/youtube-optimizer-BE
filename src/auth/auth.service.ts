@@ -5,7 +5,6 @@ import {
   BadRequestException,
   ConflictException,
 } from '@nestjs/common';
-import express from 'express';
 import { JwtService } from '@nestjs/jwt';
 import { SupabaseService } from '../supabase/supabase.service';
 import { LogAggregatorService } from '../logging/services/log-aggregator.service';
@@ -23,7 +22,11 @@ import { SocialProvider } from './dto/social-login.dto';
 import { User, UserProfileWithSubscription } from './types/user.interface';
 import { Profile } from './types/profiles.type';
 import { AuthResponse } from './types/auth-response.type';
-import { TIER_FEATURES, SubscriptionTier } from '../DTO/subscription.dto';
+import {
+  TIER_FEATURES,
+  SubscriptionTier,
+  SubscriptionStatus,
+} from '../DTO/subscription.dto';
 
 @Injectable()
 export class AuthService {
@@ -69,7 +72,7 @@ export class AuthService {
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     // Fetch the created profile
-    const { data: profile, error: profileError } = await client
+    const { error: profileError } = await client
       .from('profiles')
       .select()
       .eq('id', authData.user.id)
@@ -78,7 +81,7 @@ export class AuthService {
     if (profileError) {
       this.logger.error('Profile not found after user creation:', profileError);
       // Profile might not exist yet, create it manually
-      const { data: newProfile, error: createError } = await client
+      const { error: createError } = await client
         .from('profiles')
         .insert({
           id: authData.user.id,
@@ -97,11 +100,6 @@ export class AuthService {
           `Profile creation failed: ${createError.message}`,
         );
       }
-      // Use the newly created profile
-      const finalProfile = newProfile;
-    } else {
-      // Use the fetched profile
-      const finalProfile = profile;
     }
 
     // Get the final profile (either fetched or created)
@@ -199,7 +197,7 @@ export class AuthService {
     return this.login(loginDto);
   }
 
-  async logout(userId: string, token?: string): Promise<{ success: boolean }> {
+  async logout(): Promise<{ success: boolean }> {
     const client = this.supabase.getClient();
 
     // Use Supabase Auth to sign out (invalidates all tokens)
@@ -282,17 +280,25 @@ export class AuthService {
       }
 
       // Get active subscription
-      const { data: subscription, error: subError } = await client
+      const { data: subscription } = await client
         .from('user_subscriptions')
         .select(
           'tier, status, current_period_start, current_period_end, cancel_at_period_end, trial_end',
         )
         .eq('user_id', userId)
         .eq('status', 'active')
-        .maybeSingle();
+        .maybeSingle<{
+          tier: string;
+          status: string;
+          current_period_start: string;
+          current_period_end: string;
+          cancel_at_period_end: boolean;
+          trial_end: string | null;
+        }>();
 
       // Default to FREE tier if no active subscription
-      const tier = subscription?.tier || SubscriptionTier.FREE;
+      const tier =
+        (subscription?.tier as SubscriptionTier) || SubscriptionTier.FREE;
       const tierFeatures = TIER_FEATURES[tier];
 
       // Calculate usage for current billing period
@@ -300,7 +306,7 @@ export class AuthService {
         ? new Date(subscription.current_period_start)
         : new Date(new Date().getFullYear(), new Date().getMonth(), 1); // Start of current month
 
-      const { count: analysesUsed, error: auditError } = await client
+      const { count: analysesUsed } = await client
         .from('audits')
         .select('*', { count: 'exact', head: true })
         .eq('user_id', userId)
@@ -330,24 +336,26 @@ export class AuthService {
         updatedAt: new Date(profile.updated_at ?? ''),
         subscription: subscription
           ? {
-              tier: subscription.tier,
-              status: subscription.status,
-              currentPeriodStart: subscription.current_period_start,
-              currentPeriodEnd: subscription.current_period_end,
+              tier: subscription.tier as SubscriptionTier,
+              status: subscription.status as SubscriptionStatus,
+              currentPeriodStart: new Date(subscription.current_period_start),
+              currentPeriodEnd: new Date(subscription.current_period_end),
               cancelAtPeriodEnd: subscription.cancel_at_period_end || false,
-              trialEnd: subscription.trial_end || null,
+              trialEnd: subscription.trial_end
+                ? new Date(subscription.trial_end)
+                : undefined,
             }
           : {
               tier: SubscriptionTier.FREE,
-              status: 'active',
-              currentPeriodStart: periodStart.toISOString(),
+              status: SubscriptionStatus.ACTIVE,
+              currentPeriodStart: new Date(periodStart),
               currentPeriodEnd: new Date(
                 periodStart.getFullYear(),
                 periodStart.getMonth() + 1,
                 0,
-              ).toISOString(),
+              ),
               cancelAtPeriodEnd: false,
-              trialEnd: null,
+              trialEnd: undefined,
             },
         usage: {
           analysesUsed: analysesUsed || 0,
@@ -389,24 +397,22 @@ export class AuthService {
       .single<Profile>();
 
     const allowedUpdates = ['name'];
-    const filteredUpdates: any = {};
-    const oldValues: any = {};
-    const newValues: any = {};
+    const filteredUpdates: Record<string, unknown> = {};
+    const oldValues: Record<string, unknown> = {};
+    const newValues: Record<string, unknown> = {};
     const changes: string[] = [];
 
     Object.keys(updates).forEach((key: keyof User) => {
       if (allowedUpdates.includes(key)) {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         filteredUpdates[key] = updates[key];
         if (oldProfile && oldProfile[key] !== updates[key]) {
-          oldValues[key] = oldProfile[key];
+          oldValues[key] = oldProfile[key] as unknown;
           newValues[key] = updates[key];
           changes.push(key);
         }
       }
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     filteredUpdates.updated_at = new Date().toISOString();
 
     const { data: profile, error } = await client
@@ -465,11 +471,7 @@ export class AuthService {
   /**
    * Handle Google OAuth callback - exchange code for user info and create session
    */
-  async handleGoogleCallback(
-    code: string,
-    req: express.Request,
-    res: express.Response,
-  ): Promise<AuthResponse> {
+  async handleGoogleCallback(code: string): Promise<AuthResponse> {
     // Use service client with admin privileges
     const serviceClient = this.supabase.getServiceClient();
 
@@ -498,7 +500,6 @@ export class AuthService {
     );
 
     let userId: string;
-    let isNewUser = false;
 
     if (existingUser) {
       userId = existingUser.id;
@@ -540,17 +541,16 @@ export class AuthService {
       }
 
       userId = newUser.user.id;
-      isNewUser = true;
       this.logger.debug(`Created new user in Supabase Auth: ${userId}`);
     }
 
     // Step 3: Get or create profile in profiles table
     const client = this.supabase.getClient();
-    const { data: existingProfile, error: profileError } = await client
+    const { data: existingProfile } = await client
       .from('profiles')
       .select('*')
       .eq('id', userId)
-      .maybeSingle();
+      .maybeSingle<Profile>();
 
     let profile: Profile;
 
@@ -560,12 +560,12 @@ export class AuthService {
         .from('profiles')
         .update({
           name: googleUserInfo.name,
-          picture: googleUserInfo.picture,
+          picture: googleUserInfo.picture || null,
           updated_at: new Date().toISOString(),
         })
         .eq('id', userId)
         .select()
-        .single();
+        .single<Profile>();
 
       if (updateError) {
         this.logger.warn(`Failed to update profile: ${updateError.message}`);
@@ -581,14 +581,14 @@ export class AuthService {
           id: userId,
           email: googleUserInfo.email,
           name: googleUserInfo.name,
-          picture: googleUserInfo.picture,
+          picture: googleUserInfo.picture || null,
           provider: 'google',
           role: UserRole.USER,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         })
         .select()
-        .single();
+        .single<Profile>();
 
       if (createError || !newProfile) {
         throw new BadRequestException(
@@ -738,8 +738,8 @@ export class AuthService {
       // Log audit trail
       await this.logAggregatorService.logAuditTrail({
         actorId: user.id,
-        actorEmail: profile?.email || user.email || 'unknown',
-        actorRole: profile?.role || 'user',
+        actorEmail: String(profile?.email || user.email || 'unknown'),
+        actorRole: String(profile?.role || 'user'),
         action: 'reset_password',
         entityType: 'user_credentials',
         entityId: user.id,
@@ -803,7 +803,7 @@ export class AuthService {
 
       // Verify current password by attempting to sign in
       const { error: signInError } = await client.auth.signInWithPassword({
-        email: profile.email,
+        email: String(profile.email),
         password: currentPassword,
       });
 
@@ -825,8 +825,8 @@ export class AuthService {
       // Log audit trail
       await this.logAggregatorService.logAuditTrail({
         actorId: userId,
-        actorEmail: profile.email,
-        actorRole: profile.role || 'user',
+        actorEmail: String(profile.email),
+        actorRole: String(profile.role || 'user'),
         action: 'change_password',
         entityType: 'user_credentials',
         entityId: userId,
@@ -862,7 +862,7 @@ export class AuthService {
    * Sign out user due to suspicious activity
    * @param userId The user ID
    */
-  async signOutForSuspiciousActivity(userId: string): Promise<void> {
+  async signOutForSuspiciousActivity(): Promise<void> {
     const client = this.supabase.getClient();
     // Supabase Auth will invalidate all sessions
     await client.auth.signOut();
@@ -872,7 +872,7 @@ export class AuthService {
    * Sign out all user sessions due to security breach
    * @param userId The user ID
    */
-  async signOutAllForSecurityBreach(userId: string): Promise<void> {
+  async signOutAllForSecurityBreach(): Promise<void> {
     const client = this.supabase.getClient();
     // Supabase Auth handles session invalidation
     await client.auth.signOut();

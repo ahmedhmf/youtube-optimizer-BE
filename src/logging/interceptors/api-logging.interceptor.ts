@@ -12,6 +12,12 @@ import { Request, Response } from 'express';
 import { ApiLogService } from '../services/api-log.service';
 import { v4 as uuidv4 } from 'uuid';
 
+interface AuthenticatedRequest extends Request {
+  user?: { id: string };
+  requestId?: string;
+  sessionId?: string;
+}
+
 @Injectable()
 export class ApiLoggingInterceptor implements NestInterceptor {
   private readonly logger = new Logger(ApiLoggingInterceptor.name);
@@ -27,7 +33,7 @@ export class ApiLoggingInterceptor implements NestInterceptor {
     const startTime = Date.now();
 
     // Attach request ID to request object
-    (request as any).requestId = requestId;
+    (request as AuthenticatedRequest).requestId = requestId;
 
     // Calculate request size
     const requestSize = request.headers['content-length']
@@ -73,7 +79,7 @@ export class ApiLoggingInterceptor implements NestInterceptor {
   ): Promise<void> {
     const responseTime = Date.now() - startTime;
     const statusCode: number = error
-      ? (error?.status as number) || 500
+      ? (error as Error & { status?: number }).status || 500
       : response.statusCode;
 
     // Calculate response size safely (handles circular references)
@@ -86,7 +92,7 @@ export class ApiLoggingInterceptor implements NestInterceptor {
     const cached = response.getHeader('X-Cache-Hit') === 'true';
 
     // Extract user info
-    const user = (request as any).user;
+    const user = (request as AuthenticatedRequest).user;
 
     // Should we log the request/response body?
     const shouldLogBodies = this.shouldLogBodies(request.path);
@@ -105,18 +111,20 @@ export class ApiLoggingInterceptor implements NestInterceptor {
       referrer: request.headers['referer'],
       queryParams: request.query,
       requestBody: shouldLogBodies
-        ? this.sanitizeBody(request.body)
+        ? (this.sanitizeBody(request.body) as Record<string, unknown>)
         : undefined,
       responseBody: shouldLogBodies
-        ? this.sanitizeBody(responseData)
+        ? (this.sanitizeBody(responseData) as Record<string, unknown>)
         : undefined,
-      headers: this.sanitizeHeaders(request.headers),
-      errorMessage: error?.message,
+      headers: this.sanitizeHeaders(request.headers) as Record<string, string>,
+      errorMessage: error instanceof Error ? error.message : undefined,
       rateLimitHit,
       cached,
-      sessionId: (request as any).sessionId,
+      sessionId: (request as AuthenticatedRequest).sessionId,
       deviceId: request.headers['x-device-id'] as string,
-      geographicalLocation: this.extractGeoLocation(request),
+      geographicalLocation: this.extractGeoLocation() as
+        | Record<string, unknown>
+        | undefined,
     });
   }
 
@@ -132,26 +140,29 @@ export class ApiLoggingInterceptor implements NestInterceptor {
 
       const stringifyWithCircularCheck = (value: any): string => {
         if (value !== null && typeof value === 'object') {
-          if (seen.has(value)) {
+          if (seen.has(value as object)) {
             return '"[Circular]"';
           }
-          seen.add(value);
+          seen.add(value as object);
         }
-        return JSON.stringify(value, (key, val) => {
+        return JSON.stringify(value, (_key, val) => {
           if (val !== null && typeof val === 'object') {
-            if (seen.has(val)) {
+            if (seen.has(val as object)) {
               return '[Circular]';
             }
-            seen.add(val);
+            seen.add(val as object);
           }
-          return val;
+          return val as string | number | boolean | null | object;
         });
       };
 
       return stringifyWithCircularCheck(obj).length;
     } catch (error) {
       // If still fails, return approximate size
-      this.logger.warn('Failed to calculate object size:', error.message);
+      this.logger.warn(
+        'Failed to calculate object size:',
+        error instanceof Error ? error.message : String(error),
+      );
       return 0;
     }
   }
@@ -184,14 +195,14 @@ export class ApiLoggingInterceptor implements NestInterceptor {
         }
 
         // Check for circular reference
-        if (seen.has(obj)) {
+        if (seen.has(obj as object)) {
           return '[Circular]';
         }
-        seen.add(obj);
+        seen.add(obj as object);
 
         // Handle arrays
         if (Array.isArray(obj)) {
-          return obj.map((item) => sanitize(item));
+          return obj.map((item) => sanitize(item) as unknown);
         }
 
         // Handle objects
@@ -212,7 +223,7 @@ export class ApiLoggingInterceptor implements NestInterceptor {
             if (
               sensitiveFields.some((field) => key.toLowerCase().includes(field))
             ) {
-              result[key] = '[REDACTED]';
+              (result as Record<string, unknown>)[key] = '[REDACTED]';
             } else {
               // Skip Node.js internal objects that might cause issues
               if (
@@ -222,14 +233,16 @@ export class ApiLoggingInterceptor implements NestInterceptor {
                 key === 'req' ||
                 key === 'res'
               ) {
-                result[key] = '[Skipped]';
+                (result as Record<string, unknown>)[key] = '[Skipped]';
                 continue;
               }
 
               try {
-                result[key] = sanitize(obj[key]);
-              } catch (error) {
-                result[key] = '[Error]';
+                (result as Record<string, unknown>)[key] = sanitize(
+                  (obj as Record<string, unknown>)[key],
+                );
+              } catch {
+                (result as Record<string, unknown>)[key] = '[Error]';
               }
             }
           }
@@ -240,7 +253,10 @@ export class ApiLoggingInterceptor implements NestInterceptor {
 
       return sanitize(body);
     } catch (error) {
-      this.logger.warn('Failed to sanitize body:', error.message);
+      this.logger.warn(
+        'Failed to sanitize body:',
+        error instanceof Error ? error.message : String(error),
+      );
       return { error: 'Failed to sanitize body' };
     }
   }
@@ -265,16 +281,21 @@ export class ApiLoggingInterceptor implements NestInterceptor {
               key.toLowerCase().includes(header),
             )
           ) {
-            sanitized[key] = '[REDACTED]';
+            (sanitized as Record<string, unknown>)[key] = '[REDACTED]';
           } else {
-            sanitized[key] = headers[key];
+            (sanitized as Record<string, unknown>)[key] = (
+              headers as Record<string, unknown>
+            )[key];
           }
         }
       }
 
       return sanitized;
     } catch (error) {
-      this.logger.warn('Failed to sanitize headers:', error.message);
+      this.logger.warn(
+        'Failed to sanitize headers:',
+        error instanceof Error ? error.message : String(error),
+      );
       return {};
     }
   }
@@ -282,9 +303,9 @@ export class ApiLoggingInterceptor implements NestInterceptor {
   /**
    * Extract geographical location from IP (stub - integrate with geoip service)
    */
-  private extractGeoLocation(request: Request): any {
+  private extractGeoLocation(): undefined {
     // TODO: Integrate with GeoIP service (MaxMind, IP2Location, etc.)
-    // For now, return null or basic info
-    return null;
+    // For now, return undefined or basic info
+    return undefined;
   }
 }

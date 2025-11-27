@@ -94,7 +94,7 @@ export class UserFeedbackController {
       (req.headers['x-forwarded-for'] as string) ||
       (req.headers['x-real-ip'] as string) ||
       'unknown';
-    const userAgent = req.headers['user-agent'] || 'unknown';
+    const userAgent = String(req.headers['user-agent']) || 'unknown';
 
     const feedback = await this.feedbackService.submitFeedback(
       req.user.id,
@@ -193,7 +193,7 @@ export class UserFeedbackController {
       description: `User submitted feature request: ${requestDto.featureName}`,
       severity: LogSeverity.INFO,
       ipAddress,
-      userAgent: req.headers['user-agent'] || 'unknown',
+      userAgent: String(req.headers['user-agent']) || 'unknown',
       metadata: {
         featureRequestId: featureRequest.id,
         featureName: requestDto.featureName,
@@ -241,7 +241,7 @@ export class UserFeedbackController {
       (req.headers['x-forwarded-for'] as string) ||
       (req.headers['x-real-ip'] as string) ||
       'unknown';
-    const userAgent = req.headers['user-agent'] || 'unknown';
+    const userAgent = String(req.headers['user-agent']) || 'unknown';
     const sessionId = req.headers['session-id'] as string;
 
     await this.feedbackService.trackUsage(
@@ -376,7 +376,7 @@ export class UserFeedbackController {
       (req.headers['x-forwarded-for'] as string) ||
       (req.headers['x-real-ip'] as string) ||
       'unknown';
-    const userAgent = req.headers['user-agent'] || 'unknown';
+    const userAgent = String(req.headers['user-agent']) || 'unknown';
 
     await this.userLogService.logActivity({
       userId: req.user.id,

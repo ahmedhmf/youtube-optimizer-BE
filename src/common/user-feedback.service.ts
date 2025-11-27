@@ -105,7 +105,7 @@ export class UserFeedbackService {
       .from('user_feedbacks')
       .insert(feedbackData)
       .select()
-      .single();
+      .single<UserFeedback>();
 
     if (error) {
       this.logger.error('Failed to submit feedback:', error);
@@ -159,7 +159,7 @@ export class UserFeedbackService {
       .from('feature_requests')
       .insert(requestData)
       .select()
-      .single();
+      .single<FeatureRequest>();
 
     if (error) {
       this.logger.error('Failed to submit feature request:', error);
@@ -277,6 +277,8 @@ export class UserFeedbackService {
       );
     }
 
+    const typedFeedbacks = (feedbacks || []) as UserFeedback[];
+
     // Get feature requests with vote counts
     const { data: featureRequests, error: featureError } = await client
       .from('feature_requests')
@@ -292,6 +294,8 @@ export class UserFeedbackService {
       );
     }
 
+    const typedFeatureRequests = (featureRequests || []) as FeatureRequest[];
+
     // Get usage statistics
     const { data: usageEvents, error: usageError } = await client
       .from('usage_events')
@@ -303,16 +307,18 @@ export class UserFeedbackService {
       throw new Error(`Failed to get usage events: ${usageError.message}`);
     }
 
+    const typedUsageEvents = (usageEvents || []) as UsageEvent[];
+
     // Calculate analytics
-    const feedbacksByType = feedbacks.reduce(
+    const feedbacksByType = typedFeedbacks.reduce(
       (acc: Record<string, number>, feedback: UserFeedback) => {
         acc[feedback.type] = (acc[feedback.type] || 0) + 1;
         return acc;
       },
-      {},
+      {} as Record<string, number>,
     );
 
-    const satisfactionEvents = usageEvents.filter(
+    const satisfactionEvents = typedUsageEvents.filter(
       (event: UsageEvent) =>
         event.satisfaction !== null && event.satisfaction !== undefined,
     );
@@ -324,7 +330,7 @@ export class UserFeedbackService {
           ) / satisfactionEvents.length
         : 0;
 
-    const topRequestedFeatures = featureRequests
+    const topRequestedFeatures = typedFeatureRequests
       .slice(0, 5)
       .map((request: FeatureRequest) => ({
         feature: request.feature_name,
@@ -332,7 +338,7 @@ export class UserFeedbackService {
         avgImportance: request.importance,
       }));
 
-    const featureUsageMap = usageEvents.reduce(
+    const featureUsageMap = typedUsageEvents.reduce(
       (
         acc: Record<
           string,
@@ -358,7 +364,14 @@ export class UserFeedbackService {
         }
         return acc;
       },
-      {},
+      {} as Record<
+        string,
+        {
+          count: number;
+          totalSatisfaction: number;
+          satisfactionCount: number;
+        }
+      >,
     );
 
     const featureUsageStats = Object.entries(featureUsageMap)
@@ -381,11 +394,11 @@ export class UserFeedbackService {
       .slice(0, 10);
 
     return {
-      totalFeedbacks: feedbacks.length,
+      totalFeedbacks: typedFeedbacks.length,
       feedbacksByType,
       averageSatisfaction: Math.round(averageSatisfaction * 100) / 100,
       topRequestedFeatures,
-      recentFeedbacks: feedbacks
+      recentFeedbacks: typedFeedbacks
         .slice(0, 5)
         .sort(
           (a: UserFeedback, b: UserFeedback) =>
@@ -413,7 +426,7 @@ export class UserFeedbackService {
       throw new Error(`Failed to get user feedbacks: ${error.message}`);
     }
 
-    return data || [];
+    return (data as UserFeedback[]) || [];
   }
 
   /**
@@ -433,7 +446,7 @@ export class UserFeedbackService {
       throw new Error(`Failed to get user feature requests: ${error.message}`);
     }
 
-    return data || [];
+    return (data as FeatureRequest[]) || [];
   }
 
   /**

@@ -10,6 +10,8 @@ import {
 import { UpdateUserDto } from './dto/update-user-info.dto';
 import { Profile } from 'src/auth/types/profiles.type';
 import { UsageOverviewDto } from './dto/usage-overview.dto';
+import { UserUsageToken } from './model/user-usage-tokens.type';
+import { UserActivities } from './model/user-activities.type';
 
 @Injectable()
 export class AdminService {
@@ -85,7 +87,7 @@ export class AdminService {
 
       // Get additional data for each user
       const enrichedUsers = await Promise.all(
-        (profiles || []).map(async (profile: any) => {
+        (profiles || []).map(async (profile: Profile) => {
           const userId = profile.id;
 
           // Get subscription data
@@ -95,7 +97,14 @@ export class AdminService {
             .eq('user_id', userId)
             .eq('status', 'active')
             .single()
-            .then((res) => ({ data: res.data, error: res.error }));
+            .then((res) => ({
+              data: res.data as {
+                tier: string;
+                status: string;
+                current_period_end: string;
+              } | null,
+              error: res.error,
+            }));
 
           // Get onboarding data
           const { data: onboarding } = await client
@@ -103,7 +112,14 @@ export class AdminService {
             .select('current_step, completed_steps, completed_at')
             .eq('user_id', userId)
             .single()
-            .then((res) => ({ data: res.data, error: res.error }));
+            .then((res) => ({
+              data: res.data as {
+                current_step: string;
+                completed_steps: string[];
+                completed_at: string;
+              } | null,
+              error: res.error,
+            }));
 
           // Get last activity from sessions
           const { data: lastSession } = await client
@@ -113,7 +129,10 @@ export class AdminService {
             .order('last_activity', { ascending: false })
             .limit(1)
             .single()
-            .then((res) => ({ data: res.data, error: res.error }));
+            .then((res) => ({
+              data: res.data as { last_activity: string } | null,
+              error: res.error,
+            }));
 
           // Get total analyses count
           const { count: totalAnalyses } = await client
@@ -123,7 +142,9 @@ export class AdminService {
             .then((res) => ({ count: res.count, error: res.error }));
 
           // Calculate onboarding progress
-          const completedSteps = onboarding?.completed_steps?.length || 0;
+          const completedSteps = Array.isArray(onboarding?.completed_steps)
+            ? onboarding.completed_steps.length
+            : 0;
           const totalSteps = 5; // Total onboarding steps
           const progressPercentage = Math.round(
             (completedSteps / totalSteps) * 100,
@@ -142,8 +163,8 @@ export class AdminService {
             role: this.getUserRoleFromString(profile.role),
             picture: profile.picture || '',
             provider: this.getValidProvider(profile.provider),
-            createdAt: new Date(profile.created_at),
-            updatedAt: new Date(profile.updated_at),
+            createdAt: new Date(profile.created_at ?? ''),
+            updatedAt: new Date(profile.updated_at ?? ''),
             subscription: subscription
               ? {
                   tier: subscription.tier || 'free',
@@ -184,7 +205,9 @@ export class AdminService {
       };
     } catch (error) {
       this.logger.error('Error fetching all users:', error);
-      throw new Error(`Failed to fetch users: ${error.message}`);
+      throw new Error(
+        `Failed to fetch users: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -221,37 +244,43 @@ export class AdminService {
    */
   public async getUserById(userId: string): Promise<AllUserInformation> {
     try {
-      const users = await this.getAllUsers({
-        page: 1,
-        limit: 1,
-        search: userId,
-      });
-
       const client = this.supabase.getServiceClient();
       const { data: profile } = await client
         .from('profiles')
         .select('*')
         .eq('id', userId)
-        .single();
+        .single<Profile>();
 
       if (!profile) {
         throw new Error('User not found');
       }
 
       // Get subscription data
-      const { data: subscription } = await client
+      const { data: subscription } = (await client
         .from('user_subscriptions')
         .select('tier, status, current_period_end')
         .eq('user_id', userId)
         .eq('status', 'active')
-        .single();
+        .single()) as {
+        data: {
+          tier: string;
+          status: string;
+          current_period_end: string;
+        } | null;
+      };
 
       // Get onboarding data
-      const { data: onboarding } = await client
+      const { data: onboarding } = (await client
         .from('user_onboarding')
         .select('current_step, progress_percentage, completed_at')
         .eq('user_id', userId)
-        .single();
+        .single()) as {
+        data: {
+          current_step: string;
+          progress_percentage: number;
+          completed_at: string;
+        } | null;
+      };
 
       return {
         id: profile.id,
@@ -259,10 +288,8 @@ export class AdminService {
         name: profile.name || '',
         role: this.getUserRoleFromString(profile.role),
         provider: this.getValidProvider(profile.provider),
-        accountStatus: profile.account_status || 'active',
-        lastActivity: profile.last_activity
-          ? new Date(profile.last_activity)
-          : undefined,
+        accountStatus: 'active' as 'active' | 'locked' | 'inactive',
+        lastActivity: undefined,
         subscription: subscription
           ? {
               tier: subscription.tier,
@@ -279,13 +306,15 @@ export class AdminService {
                 : undefined,
             }
           : undefined,
-        picture: profile.picture,
+        picture: profile.picture ?? undefined,
         createdAt: new Date(profile.created_at ?? ''),
         updatedAt: new Date(profile.updated_at ?? ''),
       };
     } catch (error) {
       this.logger.error(`Error fetching user ${userId}:`, error);
-      throw new Error(`Failed to fetch user: ${error.message}`);
+      throw new Error(
+        `Failed to fetch user: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -312,7 +341,7 @@ export class AdminService {
         .from('profiles')
         .select('*')
         .eq('id', userId)
-        .single();
+        .single<Profile>();
 
       if (fetchError || !existingUser) {
         throw new Error('User not found');
@@ -323,15 +352,15 @@ export class AdminService {
         .from('profiles')
         .select('email, role')
         .eq('id', adminId)
-        .single();
+        .single<{ email: string; role: string }>();
 
       // Capture old values for audit trail
-      const oldValues: any = {};
-      const newValues: any = {};
+      const oldValues: Record<string, unknown> = {};
+      const newValues: Record<string, unknown> = {};
       const changes: string[] = [];
 
       // Prepare update data (only include fields that are provided)
-      const profileUpdates: any = {
+      const profileUpdates: Partial<Profile> & { updated_at: string } = {
         updated_at: new Date().toISOString(),
       };
 
@@ -392,28 +421,18 @@ export class AdminService {
         .update(profileUpdates)
         .eq('id', userId)
         .select()
-        .single();
+        .single<Profile>();
 
       if (updateError) {
         throw new Error(`Failed to update user: ${updateError.message}`);
       }
 
-      // Handle account status changes
-      if (
-        updateData.accountStatus !== undefined &&
-        updateData.accountStatus !== existingUser.account_status
-      ) {
-        oldValues.accountStatus = existingUser.account_status;
-        newValues.accountStatus = updateData.accountStatus;
-        changes.push('account_status');
-
-        // Account lockout is now handled by Supabase Auth
-        // Admin can disable users through Supabase dashboard if needed
-        if (updateData.accountStatus === 'locked') {
-          this.logger.warn(
-            `Account lockout requested for ${existingUser.email} - use Supabase dashboard to disable user`,
-          );
-        }
+      // Account lockout is now handled by Supabase Auth
+      // Admin can disable users through Supabase dashboard if needed
+      if (updateData.accountStatus === 'locked') {
+        this.logger.warn(
+          `Account lockout requested for ${existingUser.email} - use Supabase dashboard to disable user`,
+        );
       }
 
       // Log admin action to old admin_audit_log table
@@ -464,7 +483,9 @@ export class AdminService {
       return users.users[0];
     } catch (error) {
       this.logger.error(`Error updating user ${userId}:`, error);
-      throw new Error(`Failed to update user: ${error.message}`);
+      throw new Error(
+        `Failed to update user: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -484,28 +505,35 @@ export class AdminService {
         .from('profiles')
         .select('id, email, name')
         .eq('id', userId)
-        .single();
+        .single<Profile>();
 
       if (profileError || !profile) {
         throw new Error('User not found');
       }
 
       // Get subscription info
-      const { data: subscription } = await client
+      const { data: subscription } = (await client
         .from('user_subscriptions')
         .select('tier, status, current_period_start, current_period_end')
         .eq('user_id', userId)
         .eq('status', 'active')
-        .single();
+        .single()) as {
+        data: {
+          tier: string;
+          status: string;
+          current_period_start: string;
+          current_period_end: string;
+        } | null;
+      };
 
       const subscriptionTier = subscription?.tier || 'free';
 
       // Get subscription limits
-      const { data: limits } = await client
+      const { data: limits } = (await client
         .from('subscription_limits')
         .select('*')
         .eq('tier', subscriptionTier)
-        .single();
+        .single()) as { data: Record<string, unknown> | null };
 
       // Calculate current billing period
       const now = new Date();
@@ -579,7 +607,9 @@ export class AdminService {
         `Error fetching usage overview for user ${userId}:`,
         error,
       );
-      throw new Error(`Failed to fetch usage overview: ${error.message}`);
+      throw new Error(
+        `Failed to fetch usage overview: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -590,7 +620,7 @@ export class AdminService {
     userId: string,
     periodStart: Date,
     periodEnd: Date,
-    limits: any,
+    limits: Record<string, unknown> | null,
   ): Promise<UsageOverviewDto['videoAnalysis']> {
     const client = this.supabase.getServiceClient();
 
@@ -608,7 +638,7 @@ export class AdminService {
       .gte('created_at', periodStart.toISOString())
       .lte('created_at', periodEnd.toISOString());
 
-    const limit = limits?.video_analysis_limit || 5;
+    const limit = (limits?.video_analysis_limit as number) || 5;
     const unlimited = limit === -1;
     const remaining = unlimited
       ? Infinity
@@ -633,7 +663,7 @@ export class AdminService {
     userId: string,
     periodStart: Date,
     periodEnd: Date,
-    limits: any,
+    limits: Record<string, unknown> | null,
   ): Promise<UsageOverviewDto['tokens']> {
     const client = this.supabase.getServiceClient();
 
@@ -644,7 +674,7 @@ export class AdminService {
       .eq('user_id', userId);
 
     const totalUsed = (totalTokenData || []).reduce(
-      (sum, record) => sum + record.tokens_consumed,
+      (sum: number, record: UserUsageToken) => sum + record.tokens_consumed,
       0,
     );
 
@@ -657,13 +687,13 @@ export class AdminService {
       .lte('created_at', periodEnd.toISOString());
 
     const monthlyUsed = (monthlyTokenData || []).reduce(
-      (sum, record) => sum + record.tokens_consumed,
+      (sum: number, record: UserUsageToken) => sum + record.tokens_consumed,
       0,
     );
 
     // Calculate breakdown by feature type
     const breakdownMap = new Map<string, number>();
-    (monthlyTokenData || []).forEach((record) => {
+    (monthlyTokenData || []).forEach((record: UserUsageToken) => {
       const current = breakdownMap.get(record.feature_type) || 0;
       breakdownMap.set(record.feature_type, current + record.tokens_consumed);
     });
@@ -676,7 +706,7 @@ export class AdminService {
       }),
     );
 
-    const limit = limits?.token_limit || 10000;
+    const limit = (limits?.token_limit as number) || 10000;
     const unlimited = limit === -1;
     const remaining = unlimited ? Infinity : Math.max(0, limit - monthlyUsed);
     const percentageUsed = unlimited
@@ -700,7 +730,7 @@ export class AdminService {
     userId: string,
     periodStart: Date,
     periodEnd: Date,
-    limits: any,
+    limits: Record<string, unknown> | null,
   ): Promise<UsageOverviewDto['apiCalls']> {
     const client = this.supabase.getServiceClient();
 
@@ -720,7 +750,7 @@ export class AdminService {
 
     // Calculate breakdown by endpoint
     const endpointMap = new Map<string, number>();
-    (monthlyCallsData || []).forEach((record) => {
+    (monthlyCallsData || []).forEach((record: { endpoint: string }) => {
       const current = endpointMap.get(record.endpoint) || 0;
       endpointMap.set(record.endpoint, current + 1);
     });
@@ -738,7 +768,7 @@ export class AdminService {
       .sort((a, b) => b.count - a.count)
       .slice(0, 10); // Top 10 endpoints
 
-    const limit = limits?.api_calls_limit || 100;
+    const limit = (limits?.api_calls_limit as number) || 100;
     const unlimited = limit === -1;
     const remaining = unlimited
       ? Infinity
@@ -778,7 +808,7 @@ export class AdminService {
       return [];
     }
 
-    return (activities || []).map((activity) => ({
+    return (activities || []).map((activity: UserActivities) => ({
       id: activity.id,
       activityType: activity.activity_type,
       description: activity.description,
@@ -808,20 +838,35 @@ export class AdminService {
       return [];
     }
 
-    return (audits || []).map((audit) => ({
-      id: audit.id,
-      videoId: audit.video_id,
-      videoTitle: audit.metadata?.video_title || 'Unknown',
-      videoUrl: audit.metadata?.video_url || '',
-      analysisType: audit.metadata?.analysis_type || 'full',
-      tokensUsed: audit.metadata?.tokens_used || 0,
-      status: audit.status || 'completed',
-      createdAt: new Date(audit.created_at),
-      completedAt: audit.completed_at
-        ? new Date(audit.completed_at)
-        : undefined,
-      results: audit.results,
-    }));
+    return (audits || []).map(
+      (audit: {
+        id: string;
+        video_id: string;
+        metadata?: {
+          video_title?: string;
+          video_url?: string;
+          analysis_type?: string;
+          tokens_used?: number;
+        };
+        status?: string;
+        created_at: string;
+        completed_at?: string;
+        results?: unknown;
+      }) => ({
+        id: audit.id,
+        videoId: audit.video_id,
+        videoTitle: audit.metadata?.video_title || 'Unknown',
+        videoUrl: audit.metadata?.video_url || '',
+        analysisType: audit.metadata?.analysis_type || 'full',
+        tokensUsed: audit.metadata?.tokens_used || 0,
+        status: audit.status || 'completed',
+        createdAt: new Date(audit.created_at),
+        completedAt: audit.completed_at
+          ? new Date(audit.completed_at)
+          : undefined,
+        results: audit.results,
+      }),
+    );
   }
 
   private getUserRoleFromString(role: string | null): UserRole {
@@ -857,7 +902,7 @@ export class AdminService {
     adminId: string,
     action: string,
     targetUserId: string | null,
-    metadata: any,
+    metadata: Record<string, unknown>,
   ): Promise<void> {
     const client = this.supabase.getServiceClient();
 

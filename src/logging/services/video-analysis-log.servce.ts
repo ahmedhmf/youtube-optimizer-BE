@@ -43,7 +43,7 @@ export class VideoAnalysisLogService {
           created_at: new Date().toISOString(),
         })
         .select('id')
-        .single();
+        .single<{ id: string }>();
 
       if (error) {
         throw error;
@@ -69,7 +69,7 @@ export class VideoAnalysisLogService {
     const client = this.supabase.getServiceClient();
 
     try {
-      const updateData: any = {};
+      const updateData: Record<string, unknown> = {};
 
       if (updates.status !== undefined) {
         updateData.status = updates.status;
@@ -134,7 +134,7 @@ export class VideoAnalysisLogService {
     const client = this.supabase.getServiceClient();
 
     try {
-      const updateData: any = {};
+      const updateData: Record<string, unknown> = {};
 
       if (updates.status !== undefined) {
         updateData.status = updates.status;
@@ -308,7 +308,7 @@ export class VideoAnalysisLogService {
         }
 
         stats.totalTokens += log.tokens_consumed || 0;
-        stats.totalCost += parseFloat(log.cost_usd || '0');
+        stats.totalCost += parseFloat(String(log.cost_usd || '0'));
 
         if (log.processing_time_ms) {
           totalProcessingTime += log.processing_time_ms;

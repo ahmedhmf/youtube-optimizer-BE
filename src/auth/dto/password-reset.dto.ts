@@ -4,7 +4,6 @@ import {
   IsString,
   MinLength,
   MaxLength,
-  Matches,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';

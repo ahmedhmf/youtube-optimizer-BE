@@ -34,11 +34,11 @@ export class UserLogService {
       if (error) {
         this.logger.error('Failed to log user activity:', error);
         // Store in fallback mechanism (see Step 8)
-        await this.storeFallback('user_logs', data);
+        void this.storeFallback('user_logs', data);
       }
     } catch (error) {
       this.logger.error('Exception logging user activity:', error);
-      await this.storeFallback('user_logs', data);
+      void this.storeFallback('user_logs', data);
     }
   }
 
@@ -128,17 +128,25 @@ export class UserLogService {
         throw error;
       }
 
-      // Aggregate by activity type
-      const summary = (data || []).reduce((acc, log) => {
-        const key = log.activity_type;
-        if (!acc[key]) {
-          acc[key] = { count: 0, severities: {} };
-        }
-        acc[key].count++;
-        acc[key].severities[log.severity] =
-          (acc[key].severities[log.severity] || 0) + 1;
-        return acc;
-      }, {});
+      const summary = (data || []).reduce(
+        (
+          acc: Record<
+            string,
+            { count: number; severities: Record<string, number> }
+          >,
+          log: { activity_type: string; severity: string },
+        ) => {
+          const key = log.activity_type;
+          if (!acc[key]) {
+            acc[key] = { count: 0, severities: {} };
+          }
+          acc[key].count++;
+          acc[key].severities[log.severity] =
+            (acc[key].severities[log.severity] || 0) + 1;
+          return acc;
+        },
+        {},
+      );
 
       return summary;
     } catch (error) {
@@ -150,16 +158,14 @@ export class UserLogService {
   /**
    * Fallback storage for failed log writes
    */
-  private async storeFallback(table: string, data: any): Promise<void> {
+  private storeFallback(table: string, data: UserLogData): void {
     try {
-      // Store in memory cache or file system as fallback
       const fallbackLog = {
         timestamp: new Date().toISOString(),
         table,
         data,
       };
 
-      // You can implement Redis, file system, or in-memory queue here
       this.logger.warn('Stored log in fallback:', fallbackLog);
     } catch (error) {
       this.logger.error('Fallback storage also failed:', error);

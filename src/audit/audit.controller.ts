@@ -165,11 +165,11 @@ export class AuditController {
         description: `User requested YouTube video analysis`,
         severity: LogSeverity.INFO,
         ipAddress: req.ip,
-        userAgent: req.headers['user-agent'] || 'unknown',
+        userAgent: String(req.headers['user-agent'] || 'unknown'),
         metadata: {
           jobId: queueJobId,
-          videoUrl: (body.configuration as any).videoUrl,
-          analysisType: (body.configuration as any).analysisType || 'standard',
+          videoUrl: body.configuration.url,
+          analysisType: 'standard',
         },
       });
 
@@ -177,9 +177,9 @@ export class AuditController {
       await this.videoAnalysisLogService.createLog({
         userId,
         videoId: queueJobId,
-        videoUrl: (body.configuration as any).videoUrl || 'unknown',
-        videoTitle: (body.configuration as any).videoTitle || 'YouTube Video',
-        analysisType: (body.configuration as any).analysisType || 'standard',
+        videoUrl: body.configuration.url || 'unknown',
+        videoTitle: 'YouTube Video',
+        analysisType: 'standard',
         status: VideoAnalysisStatus.INITIATED,
         stage: 'queued',
         progressPercentage: 0,
@@ -298,7 +298,7 @@ export class AuditController {
         description: `User uploaded video for analysis: ${file.originalname}`,
         severity: LogSeverity.INFO,
         ipAddress: req.ip,
-        userAgent: req.headers['user-agent'] || 'unknown',
+        userAgent: String(req.headers['user-agent'] || 'unknown'),
         metadata: {
           jobId: queueJobId,
           fileName: file.originalname,
@@ -423,11 +423,11 @@ export class AuditController {
         description: 'User submitted transcript for analysis',
         severity: LogSeverity.INFO,
         ipAddress: req.ip,
-        userAgent: req.headers['user-agent'] || 'unknown',
+        userAgent: String(req.headers['user-agent'] || 'unknown'),
         metadata: {
           jobId: queueJobId,
           transcriptLength: body.transcript.length,
-          analysisType: (body.configuration as any).analysisType || 'standard',
+          analysisType: 'standard',
         },
       });
 
@@ -437,7 +437,7 @@ export class AuditController {
         videoId: queueJobId,
         videoUrl: 'transcript://direct',
         videoTitle: 'Transcript Analysis',
-        analysisType: (body.configuration as any).analysisType || 'transcript',
+        analysisType: 'transcript',
         status: VideoAnalysisStatus.INITIATED,
         stage: 'transcript_queued',
         progressPercentage: 0,
@@ -581,7 +581,7 @@ export class AuditController {
           description: 'User cancelled an analysis job',
           severity: LogSeverity.INFO,
           ipAddress: req.ip,
-          userAgent: req.headers['user-agent'] || 'unknown',
+          userAgent: String(req.headers['user-agent'] || 'unknown'),
           metadata: {
             jobId,
             jobType: job.data?.type,
@@ -703,7 +703,7 @@ export class AuditController {
         description: 'User retried a failed analysis job',
         severity: LogSeverity.INFO,
         ipAddress: req.ip,
-        userAgent: req.headers['user-agent'] || 'unknown',
+        userAgent: String(req.headers['user-agent'] || 'unknown'),
         metadata: {
           originalJobId: jobId,
           newJobId,
@@ -932,7 +932,7 @@ export class AuditController {
         description: 'User deleted an analysis record',
         severity: LogSeverity.INFO,
         ipAddress: req.ip,
-        userAgent: req.headers['user-agent'] || 'unknown',
+        userAgent: String(req.headers['user-agent'] || 'unknown'),
         metadata: {
           auditId: deletedAudit.id,
           hadThumbnail: !!deletedAudit.thumbnail_url,
@@ -954,7 +954,7 @@ export class AuditController {
         },
         changes: ['analysis_deleted'],
         ipAddress: req.ip,
-        userAgent: req.headers['user-agent'] || 'unknown',
+        userAgent: String(req.headers['user-agent'] || 'unknown'),
         metadata: {
           auditId: deletedAudit.id,
           hadThumbnail: !!deletedAudit.thumbnail_url,

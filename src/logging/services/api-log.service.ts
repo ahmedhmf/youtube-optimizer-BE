@@ -88,7 +88,7 @@ export class ApiLogService {
    */
   private startBatchProcessing(): void {
     setInterval(() => {
-      this.processBatch();
+      void this.processBatch();
     }, this.batchInterval);
   }
 
@@ -183,10 +183,29 @@ export class ApiLogService {
         throw error;
       }
 
-      // Group by endpoint
-      const endpointStats: Record<string, any> = {};
+      type LogData = {
+        endpoint: string;
+        method: string;
+        response_time_ms: number;
+        status_code: number;
+      };
 
-      (data || []).forEach((log) => {
+      const typedData = (data || []) as LogData[];
+
+      // Group by endpoint
+      const endpointStats: Record<
+        string,
+        {
+          endpoint: string;
+          method: string;
+          requestCount: number;
+          totalResponseTime: number;
+          errors: number;
+          responseTimes: number[];
+        }
+      > = {};
+
+      typedData.forEach((log) => {
         const key = `${log.method} ${log.endpoint}`;
         if (!endpointStats[key]) {
           endpointStats[key] = {
@@ -209,7 +228,7 @@ export class ApiLogService {
       });
 
       // Calculate statistics
-      return Object.values(endpointStats).map((stats: any) => ({
+      return Object.values(endpointStats).map((stats) => ({
         endpoint: stats.endpoint,
         method: stats.method,
         requestCount: stats.requestCount,

@@ -166,22 +166,24 @@ export class EnvValidationService {
    */
   private validateFormat(key: string, value: string): void {
     switch (key) {
-      case 'PORT':
+      case 'PORT': {
         const port = parseInt(value, 10);
         if (isNaN(port) || port < 1 || port > 65535) {
           throw new Error(`Invalid PORT: ${value}. Must be between 1-65535`);
         }
         break;
+      }
 
-      case 'SUPABASE_URL':
+      case 'SUPABASE_URL': {
         if (!value.startsWith('http://') && !value.startsWith('https://')) {
           throw new Error(
             `Invalid SUPABASE_URL: Must start with http:// or https://`,
           );
         }
         break;
+      }
 
-      case 'REDIS_PORT':
+      case 'REDIS_PORT': {
         const redisPort = parseInt(value, 10);
         if (isNaN(redisPort) || redisPort < 1 || redisPort > 65535) {
           throw new Error(
@@ -189,13 +191,15 @@ export class EnvValidationService {
           );
         }
         break;
+      }
 
-      case 'CORS_ORIGINS':
+      case 'CORS_ORIGINS': {
         const origins = value.split(',');
         if (origins.length === 0) {
           throw new Error('CORS_ORIGINS must contain at least one origin');
         }
         break;
+      }
     }
   }
 

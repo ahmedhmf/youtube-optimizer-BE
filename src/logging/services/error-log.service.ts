@@ -15,11 +15,10 @@ export class ErrorLogService {
     const client = this.supabase.getServiceClient();
 
     try {
-      // Check for duplicate errors in the last hour
       const oneHourAgo = new Date();
       oneHourAgo.setHours(oneHourAgo.getHours() - 1);
 
-      const { data: existingError } = await client
+      const { data: existingError } = (await client
         .from('error_logs')
         .select('id, occurrences')
         .eq('error_type', data.errorType)
@@ -28,10 +27,9 @@ export class ErrorLogService {
         .gte('created_at', oneHourAgo.toISOString())
         .order('created_at', { ascending: false })
         .limit(1)
-        .single();
+        .single()) as { data: { id: string; occurrences: number } | null };
 
       if (existingError) {
-        // Update existing error occurrence count
         await client
           .from('error_logs')
           .update({
@@ -68,7 +66,7 @@ export class ErrorLogService {
 
         if (error) {
           this.logger.error('Failed to log error:', error);
-          await this.storeFallback(data);
+          void this.storeFallback(data);
         }
       }
 
@@ -76,7 +74,7 @@ export class ErrorLogService {
       this.logger.error(`[${data.errorType}] ${data.message}`, data.stackTrace);
     } catch (error) {
       this.logger.error('Exception logging error:', error);
-      await this.storeFallback(data);
+      void this.storeFallback(data);
     }
   }
 
@@ -212,21 +210,28 @@ export class ErrorLogService {
         unresolvedCount: 0,
       };
 
-      (data || []).forEach((log) => {
-        stats.totalErrors++;
-        stats.totalOccurrences += log.occurrences;
+      (data || []).forEach(
+        (log: {
+          error_type: string;
+          severity: string;
+          occurrences: number;
+          resolved: boolean;
+        }) => {
+          stats.totalErrors++;
+          stats.totalOccurrences += log.occurrences;
 
-        stats.byType[log.error_type] =
-          (stats.byType[log.error_type] || 0) + log.occurrences;
-        stats.bySeverity[log.severity] =
-          (stats.bySeverity[log.severity] || 0) + log.occurrences;
+          stats.byType[log.error_type] =
+            (stats.byType[log.error_type] || 0) + log.occurrences;
+          stats.bySeverity[log.severity] =
+            (stats.bySeverity[log.severity] || 0) + log.occurrences;
 
-        if (log.resolved) {
-          stats.resolvedCount++;
-        } else {
-          stats.unresolvedCount++;
-        }
-      });
+          if (log.resolved) {
+            stats.resolvedCount++;
+          } else {
+            stats.unresolvedCount++;
+          }
+        },
+      );
 
       return stats;
     } catch (error) {
@@ -235,7 +240,7 @@ export class ErrorLogService {
     }
   }
 
-  private async storeFallback(data: ErrorLogData): Promise<void> {
+  private storeFallback(data: ErrorLogData): void {
     try {
       const fallbackLog = {
         timestamp: new Date().toISOString(),

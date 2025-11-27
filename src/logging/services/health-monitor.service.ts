@@ -119,7 +119,7 @@ export class HealthMonitorService {
   /**
    * Get current system health snapshot
    */
-  async getHealthSnapshot() {
+  getHealthSnapshot() {
     const totalMem = os.totalmem();
     const freeMem = os.freemem();
     const usedMem = totalMem - freeMem;

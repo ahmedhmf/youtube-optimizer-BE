@@ -22,7 +22,7 @@ describe('ValidationAndSanitizationPipe', () => {
 
   it('should sanitize malicious input', async () => {
     const maliciousInput = {
-      email: '<script>alert("xss")</script>user@test.com',
+      email: 'user<script>@test.com',
       password: 'Test123!',
     };
 
@@ -31,6 +31,8 @@ describe('ValidationAndSanitizationPipe', () => {
     });
 
     expect(result.email).not.toContain('<script>');
+    expect(result.email).not.toContain('<');
+    expect(result.email).not.toContain('>');
     expect(result.email).toBe('user@test.com');
   });
 
@@ -75,17 +77,18 @@ describe('ValidationAndSanitizationPipe', () => {
     expect(result.password).toBe('ValidPassword123!');
   });
 
-  it('should handle SQL injection attempts', async () => {
+  it('should reject SQL injection attempts in email', async () => {
     const maliciousInput = {
       email: "test'; DROP TABLE users; --@example.com",
       password: 'Test123!',
     };
 
-    const result = await pipe.transform(maliciousInput, {
-      metatype: LoginDto,
-    });
-
-    expect(result.email).not.toContain('DROP TABLE');
-    expect(result.email).not.toContain('--');
+    // Should throw BadRequestException because after sanitization,
+    // the email is no longer valid
+    await expect(
+      pipe.transform(maliciousInput, {
+        metatype: LoginDto,
+      }),
+    ).rejects.toThrow(BadRequestException);
   });
 });

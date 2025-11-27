@@ -33,6 +33,15 @@ import { UpdateUserDto } from './dto/update-user-info.dto';
 import { UserLogService } from '../logging/services/user-log.service';
 import { LogAggregatorService } from '../logging/services/log-aggregator.service';
 import { LogSeverity, LogType } from '../logging/dto/log.types';
+import { Request } from 'express';
+
+interface AuthenticatedRequest extends Request {
+  user: {
+    id: string;
+    email: string;
+    role: UserRole;
+  };
+}
 
 @ApiTags('Admin Management')
 @Controller('admin')
@@ -114,7 +123,7 @@ export class AdminController {
   async updateUserRole(
     @Param('id') userId: string,
     @Body() body: { role: UserRole },
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ) {
     // Get user data before update
     const targetUser = await this.adminService.getUserById(userId);
@@ -163,7 +172,10 @@ export class AdminController {
   @Delete('users/:id')
   @Throttle({ default: { limit: 5, ttl: 600000 } }) // 5 deletions per 10 minutes
   @RequirePermissions('canManageUsers')
-  async deleteUser(@Param('id') userId: string, @Req() req: any) {
+  async deleteUser(
+    @Param('id') userId: string,
+    @Req() req: AuthenticatedRequest,
+  ) {
     // Get complete user data before deletion
     const targetUser = await this.adminService.getUserById(userId);
     const userSnapshot = {
@@ -249,7 +261,7 @@ export class AdminController {
 
   @Get('tokens/blacklist/stats')
   @RequirePermissions('canAccessAdminPanel')
-  async getBlacklistStats() {
+  getBlacklistStats() {
     // Deprecated - Supabase Auth handles token management
     return {
       message:
@@ -261,7 +273,7 @@ export class AdminController {
 
   @Get('tokens/blacklist/:userId')
   @RequirePermissions('canAccessAdminPanel')
-  async getUserBlacklistedTokens(@Param('userId') userId: string) {
+  getUserBlacklistedTokens(@Param('userId') userId: string) {
     // Deprecated - Supabase Auth handles token management
     const tokens = [];
     return {
@@ -274,7 +286,7 @@ export class AdminController {
   @Post('tokens/cleanup')
   @RequirePermissions('canAccessAdminPanel')
   @Throttle({ short: { ttl: 60000, limit: 1 } }) // Once per minute
-  async cleanupExpiredTokens(@Req() req: any) {
+  async cleanupExpiredTokens(@Req() req: AuthenticatedRequest) {
     // Deprecated - Supabase Auth handles token cleanup automatically
 
     // Log token cleanup
@@ -300,7 +312,10 @@ export class AdminController {
   @Post('users/:userId/disable')
   @RequirePermissions('canAccessAdminPanel')
   @Throttle({ short: { ttl: 30000, limit: 3 } }) // 3 times per 30 seconds
-  async disableUserAccount(@Param('userId') userId: string, @Req() req: any) {
+  async disableUserAccount(
+    @Param('userId') userId: string,
+    @Req() req: AuthenticatedRequest,
+  ) {
     // Get user info before disabling
     const targetUser = await this.adminService.getUserById(userId);
     const oldStatus = targetUser.accountStatus;
@@ -377,12 +392,9 @@ export class AdminController {
   async updateUser(
     @Param('id') userId: string,
     @Body() updateData: UpdateUserDto,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ) {
     const adminId = req.user.id;
-
-    // Get old values before update
-    const oldUser = await this.adminService.getUserById(userId);
 
     const updatedUser = await this.adminService.updateUser(
       userId,

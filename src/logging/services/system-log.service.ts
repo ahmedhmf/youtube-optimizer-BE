@@ -1,7 +1,7 @@
 // src/logging/services/system-log.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import * as os from 'os';
-import { SupabaseService } from 'src/supabase/supabase.service';
+import { SupabaseService } from '../../supabase/supabase.service';
 import {
   SystemLogData,
   LogSeverity,
@@ -79,9 +79,9 @@ export class SystemLogService {
         operation,
         table,
         duration,
-        error: error?.message,
+        error: error instanceof Error ? error.message : undefined,
       },
-      stackTrace: error?.stack,
+      stackTrace: error instanceof Error ? error.stack : undefined,
     });
   }
 
@@ -102,8 +102,9 @@ export class SystemLogService {
       details: {
         operation,
         key,
-        error: error?.message,
+        error: error instanceof Error ? error.message : undefined,
       },
+      stackTrace: error instanceof Error ? error.stack : undefined,
     });
   }
 
@@ -124,9 +125,9 @@ export class SystemLogService {
       details: {
         operation,
         recipient,
-        error: error?.message,
+        error: error instanceof Error ? error.message : undefined,
       },
-      stackTrace: error?.stack,
+      stackTrace: error instanceof Error ? error.stack : undefined,
     });
   }
 
@@ -147,9 +148,9 @@ export class SystemLogService {
       details: {
         jobName,
         duration,
-        error: error?.message,
+        error: error instanceof Error ? error.message : undefined,
       },
-      stackTrace: error?.stack,
+      stackTrace: error instanceof Error ? error.stack : undefined,
     });
   }
 
@@ -172,7 +173,7 @@ export class SystemLogService {
         queueName,
         operation,
         jobCount,
-        error: error?.message,
+        error: error instanceof Error ? error.message : undefined,
       },
     });
   }
@@ -279,19 +280,25 @@ export class SystemLogService {
       let totalMemory = 0;
       let memoryCount = 0;
 
-      (data || []).forEach((log) => {
-        if (log.log_level === LogSeverity.ERROR) metrics.errorCount++;
-        if (log.log_level === LogSeverity.WARNING) metrics.warningCount++;
-        if (log.log_level === LogSeverity.CRITICAL) metrics.criticalCount++;
+      (data || []).forEach(
+        (log: {
+          log_level: LogSeverity;
+          category: string;
+          memory_usage_mb: number | null;
+        }) => {
+          if (log.log_level === LogSeverity.ERROR) metrics.errorCount++;
+          if (log.log_level === LogSeverity.WARNING) metrics.warningCount++;
+          if (log.log_level === LogSeverity.CRITICAL) metrics.criticalCount++;
 
-        metrics.byCategory[log.category] =
-          (metrics.byCategory[log.category] || 0) + 1;
+          metrics.byCategory[log.category] =
+            (metrics.byCategory[log.category] || 0) + 1;
 
-        if (log.memory_usage_mb) {
-          totalMemory += log.memory_usage_mb;
-          memoryCount++;
-        }
-      });
+          if (log.memory_usage_mb) {
+            totalMemory += log.memory_usage_mb;
+            memoryCount++;
+          }
+        },
+      );
 
       if (memoryCount > 0) {
         metrics.avgMemoryUsage = totalMemory / memoryCount;

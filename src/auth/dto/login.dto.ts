@@ -1,10 +1,4 @@
-import {
-  IsEmail,
-  IsString,
-  MinLength,
-  MaxLength,
-  Matches,
-} from 'class-validator';
+import { IsEmail, IsString, MinLength, MaxLength } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
 
@@ -14,7 +8,9 @@ export class LoginDto {
     description: 'User email address',
   })
   @IsEmail({}, { message: 'Please provide a valid email address' })
-  @Transform(({ value }) => value?.toLowerCase().trim())
+  @Transform(({ value }: { value: any }) =>
+    typeof value === 'string' ? value.toLowerCase().trim() : (value as string),
+  )
   @MaxLength(255, { message: 'Email must not exceed 255 characters' })
   email: string;
 
