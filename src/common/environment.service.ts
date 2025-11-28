@@ -119,6 +119,11 @@ export class EnvironmentService {
           }
         }
 
+        // Allow Vercel deployment
+        if (requestOrigin === 'https://youtube-optimizer-fe.vercel.app') {
+          return callback(null, true);
+        }
+
         // Block the request
         this.logger.warn(`CORS blocked origin: ${requestOrigin}`);
         const error = new Error(`Origin not allowed: ${requestOrigin}`);

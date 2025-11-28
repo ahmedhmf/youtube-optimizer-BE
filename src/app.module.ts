@@ -17,6 +17,7 @@ import { ApiUsageTrackerMiddleware } from './common/middleware/api-usage-tracker
 import { LoggingModule } from './logging/logging.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
 import { HealthModule } from './health/health.module';
+import { UserFeedbackModule } from './user-feedback/user-feedback.module';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { HealthModule } from './health/health.module';
     }),
     AdminModule,
     LoggingModule,
+    UserFeedbackModule,
   ],
   controllers: [AppController],
   providers: [

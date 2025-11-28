@@ -24,10 +24,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { UserRole } from '../auth/types/roles.types';
-import {
-  UserFeedbackService,
-  FeedbackAnalytics,
-} from './user-feedback.service';
+
 import {
   SubmitFeedbackDto,
   FeatureRequestDto,
@@ -35,14 +32,11 @@ import {
 } from '../DTO/feedback.dto';
 import { UserLogService } from '../logging/services/user-log.service';
 import { LogSeverity, LogType } from '../logging/dto/log.types';
-
-interface AuthenticatedRequest extends Request {
-  user: {
-    id: string;
-    email: string;
-    role: UserRole;
-  };
-}
+import {
+  UserFeedbackService,
+  FeedbackAnalytics,
+} from './user-feedback.service';
+import type { AuthenticatedRequest } from 'src/audit/models/authenticated-request.model';
 
 @ApiTags('User Feedback & Analytics')
 @Controller('feedback')

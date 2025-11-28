@@ -11,7 +11,6 @@ import { Request, Response, NextFunction } from 'express';
 import { EnvironmentService } from './common/environment.service';
 import { EnvValidationService } from './common/env-validation.service';
 import { CSRFService } from './common/csrf.service';
-import { ValidationAndSanitizationPipe } from './common/validation-sanitization.pipe';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 
 dotenv.config();
@@ -112,7 +111,6 @@ async function bootstrap() {
 
   // Enhanced validation pipes with sanitization
   app.useGlobalPipes(
-    new ValidationAndSanitizationPipe(),
     new ValidationPipe({
       whitelist: true,
       forbidNonWhitelisted: true,
