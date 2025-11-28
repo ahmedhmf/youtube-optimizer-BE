@@ -124,6 +124,13 @@ export class EnvironmentService {
           return callback(null, true);
         }
 
+        if (
+          requestOrigin ===
+          'https://youtube-optimizer-6v3db472i-ahmedhmfs-projects.vercel.app'
+        ) {
+          return callback(null, true);
+        }
+
         // Block the request
         this.logger.warn(`CORS blocked origin: ${requestOrigin}`);
         const error = new Error(`Origin not allowed: ${requestOrigin}`);

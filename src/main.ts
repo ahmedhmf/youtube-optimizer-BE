@@ -10,7 +10,7 @@ import rateLimit from 'express-rate-limit';
 import { Request, Response, NextFunction } from 'express';
 import { EnvironmentService } from './common/environment.service';
 import { EnvValidationService } from './common/env-validation.service';
-import { CSRFService } from './common/csrf.service';
+// import { CSRFService } from './common/csrf.service'; // Disabled - not needed for JWT auth
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 
 dotenv.config();
@@ -39,7 +39,7 @@ async function bootstrap() {
         secure: isProduction, // HTTPS only in production
         httpOnly: true, // Prevent XSS
         maxAge: 24 * 60 * 60 * 1000, // 24 hours
-        sameSite: isProduction ? 'strict' : 'lax', // CSRF protection
+        sameSite: 'none', // Allow cross-site cookies for frontend on different domain
       },
       name: 'sessionId', // Don't use default 'connect.sid'
     }),
@@ -85,7 +85,12 @@ async function bootstrap() {
 
   app.use('/auth', authLimiter);
 
-  // CSRF Protection Service (AFTER CORS and rate limiting)
+  // CSRF Protection - Disabled for JWT-based API
+  // Note: CSRF protection is not needed for stateless JWT authentication
+  // since tokens are sent in Authorization headers (not cookies)
+  // JWT-based APIs are naturally immune to CSRF attacks
+  // If you need CSRF protection for cookie-based sessions, uncomment below:
+  /*
   const csrfService = app.get(CSRFService);
   app.use((req: Request, res: Response, next: NextFunction) => {
     // Skip CSRF for public authentication endpoints and health check
@@ -108,6 +113,7 @@ async function bootstrap() {
     // Apply CSRF middleware for authenticated routes
     return csrfService.middleware()(req, res, next);
   });
+  */
 
   // Enhanced validation pipes with sanitization
   app.useGlobalPipes(

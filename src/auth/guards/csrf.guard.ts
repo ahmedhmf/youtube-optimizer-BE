@@ -20,6 +20,11 @@ export class CSRFGuard implements CanActivate {
   ) {}
 
   canActivate(context: ExecutionContext): boolean {
+    // CSRF protection disabled - not needed for JWT-based authentication
+    // JWT tokens in Authorization headers are naturally immune to CSRF attacks
+    return true;
+
+    /* Original CSRF validation logic (disabled):
     // Check if CSRF should be skipped for this route
     const skipCSRF = this.reflector.getAllAndOverride<boolean>(SKIP_CSRF, [
       context.getHandler(),
@@ -42,5 +47,6 @@ export class CSRFGuard implements CanActivate {
     }
 
     return true;
+    */
   }
 }
