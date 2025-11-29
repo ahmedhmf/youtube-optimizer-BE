@@ -18,6 +18,7 @@ import { LoggingModule } from './logging/logging.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
 import { HealthModule } from './health/health.module';
 import { UserFeedbackModule } from './user-feedback/user-feedback.module';
+import { MetricsModule } from './metrics/metrics.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { UserFeedbackModule } from './user-feedback/user-feedback.module';
       isGlobal: true,
       envFilePath: '.env',
     }),
+    MetricsModule,
     LoggingModule,
     CommonModule,
     HealthModule,
@@ -58,7 +60,8 @@ import { UserFeedbackModule } from './user-feedback/user-feedback.module';
 })
 export class AppModule {
   configure(consumer: MiddlewareConsumer) {
-    // Apply rate limiting first, then security middleware
+    // Metrics middleware is registered in MetricsModule
+    // Apply rate limiting, then security middleware
     consumer.apply(IPRateLimitMiddleware).forRoutes('*');
 
     consumer.apply(SecurityMiddleware).forRoutes('*');

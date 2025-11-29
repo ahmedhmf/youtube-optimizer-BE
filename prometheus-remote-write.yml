@@ -1,0 +1,40 @@
+# Prometheus configuration with Remote Write to Grafana Cloud
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'railway-production'
+    service: 'youtube-optimizer'
+
+# Remote Write to Grafana Cloud
+remote_write:
+  - url: ${GRAFANA_CLOUD_PROMETHEUS_URL}
+    basic_auth:
+      username: ${GRAFANA_CLOUD_PROMETHEUS_USER}
+      password: ${GRAFANA_CLOUD_PROMETHEUS_API_KEY}
+    queue_config:
+      capacity: 10000
+      max_shards: 200
+      min_shards: 1
+      max_samples_per_send: 5000
+      batch_send_deadline: 5s
+      min_backoff: 30ms
+      max_backoff: 100ms
+
+# Scrape configurations
+scrape_configs:
+  # Scrape the NestJS application metrics
+  - job_name: 'youtube-optimizer-backend'
+    scrape_interval: 15s
+    scrape_timeout: 10s
+    metrics_path: '/api/v1/metrics'
+    static_configs:
+      - targets: ['localhost:3000']
+        labels:
+          env: 'production'
+          app: 'api'
+
+  # Scrape Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

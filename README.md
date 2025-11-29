@@ -108,6 +108,34 @@ All protected endpoints require a Bearer token from Supabase authentication.
 Authorization: Bearer <supabase_jwt_token>
 ```
 
+### Monitoring & Observability
+
+#### **GET** `/metrics`
+Prometheus metrics endpoint for monitoring application performance.
+
+**Features:**
+- System metrics (CPU, memory, event loop)
+- HTTP request metrics (count, duration, status codes)
+- Database query performance
+- AI service request tracking
+- Authentication events
+- Error tracking
+- Cache hit/miss ratios
+
+See [Metrics Documentation](docs/metrics.md) for detailed information.
+
+**Quick Setup:**
+```bash
+# Start Prometheus
+docker run -d -p 9090:9090 -v $(pwd)/prometheus.yml:/etc/prometheus/prometheus.yml prom/prometheus
+
+# Start Grafana
+docker run -d -p 3001:3000 grafana/grafana
+```
+
+#### **GET** `/health`
+Comprehensive health check endpoint with service status.
+
 ### Endpoints
 
 #### **POST** `/analyze/video`
