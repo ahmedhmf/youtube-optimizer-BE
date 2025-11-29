@@ -230,4 +230,26 @@ export class EnvironmentService {
       },
     ];
   }
+
+  // Grafana Cloud Prometheus Configuration
+  getGrafanaCloudPrometheusUrl(): string {
+    return this.configService.get<string>(
+      'GRAFANA_CLOUD_PROMETHEUS_URL',
+      '',
+    );
+  }
+
+  getGrafanaCloudPrometheusUser(): string {
+    return this.configService.get<string>(
+      'GRAFANA_CLOUD_PROMETHEUS_USER',
+      '',
+    );
+  }
+
+  getGrafanaCloudPrometheusApiKey(): string {
+    return this.configService.get<string>(
+      'GRAFANA_CLOUD_PROMETHEUS_API_KEY',
+      '',
+    );
+  }
 }

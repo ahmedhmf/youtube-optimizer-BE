@@ -7,6 +7,7 @@ import {
 } from '@willsoto/nestjs-prometheus';
 import { MetricsService } from './metrics.service';
 import { MetricsMiddleware } from './metrics.middleware';
+import { GrafanaPushService } from './grafana-push.service';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { MetricsMiddleware } from './metrics.middleware';
   providers: [
     MetricsService,
     MetricsMiddleware,
+    GrafanaPushService,
     // HTTP Request Counter
     makeCounterProvider({
       name: 'http_requests_total',
