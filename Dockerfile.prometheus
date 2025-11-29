@@ -3,6 +3,23 @@ FROM node:20-alpine AS base
 # Install Prometheus
 FROM prom/prometheus:latest AS prometheus
 
+# Build stage
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install all dependencies (including dev dependencies for build)
+RUN npm ci
+
+# Copy source code and config files
+COPY . .
+
+# Build the application
+RUN npm run build
+
 # Final stage
 FROM node:20-alpine
 
@@ -14,11 +31,14 @@ WORKDIR /app
 # Copy Prometheus binary
 COPY --from=prometheus /bin/prometheus /bin/prometheus
 
-# Copy application files
+# Copy package files
 COPY package*.json ./
+
+# Install only production dependencies
 RUN npm ci --only=production && npm cache clean --force
 
-COPY dist ./dist
+# Copy built application from builder stage
+COPY --from=builder /app/dist ./dist
 
 # Copy Prometheus config template (not final config - will be generated at runtime)
 COPY prometheus-remote-write.yml /etc/prometheus/prometheus-template.yml
