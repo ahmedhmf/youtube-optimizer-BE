@@ -3,38 +3,36 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
   external_labels:
-    cluster: 'railway-production'
-    service: 'youtube-optimizer'
-
-# Remote Write to Grafana Cloud
-remote_write:
-  - url: ${GRAFANA_CLOUD_PROMETHEUS_URL}
-    basic_auth:
-      username: ${GRAFANA_CLOUD_PROMETHEUS_USER}
-      password: ${GRAFANA_CLOUD_PROMETHEUS_API_KEY}
-    queue_config:
-      capacity: 10000
-      max_shards: 200
-      min_shards: 1
-      max_samples_per_send: 5000
-      batch_send_deadline: 5s
-      min_backoff: 30ms
-      max_backoff: 100ms
+    cluster: 'railway'
+    environment: '${RAILWAY_ENVIRONMENT:-production}'
+    service: '${RAILWAY_SERVICE_NAME:-youtube-optimizer-be}'
 
 # Scrape configurations
 scrape_configs:
   # Scrape the NestJS application metrics
-  - job_name: 'youtube-optimizer-backend'
-    scrape_interval: 15s
-    scrape_timeout: 10s
-    metrics_path: '/api/v1/metrics'
+  - job_name: 'nestjs-app'
     static_configs:
       - targets: ['localhost:3000']
-        labels:
-          env: 'production'
-          app: 'api'
+    metrics_path: '/api/v1/metrics'
+    scrape_interval: 15s
+    scrape_timeout: 10s
 
   # Scrape Prometheus itself
   - job_name: 'prometheus'
     static_configs:
       - targets: ['localhost:9090']
+
+# Remote Write to Grafana Cloud
+remote_write:
+  - url: '${GRAFANA_CLOUD_PROMETHEUS_URL}'
+    basic_auth:
+      username: '${GRAFANA_CLOUD_PROMETHEUS_USER}'
+      password: '${GRAFANA_CLOUD_PROMETHEUS_API_KEY}'
+    queue_config:
+      capacity: 10000
+      max_shards: 50
+      min_shards: 1
+      max_samples_per_send: 5000
+      batch_send_deadline: 5s
+      min_backoff: 30ms
+      max_backoff: 100ms
