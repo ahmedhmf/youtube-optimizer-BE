@@ -122,8 +122,8 @@ export class GrafanaPushService implements OnModuleInit {
       req.end();
     } catch (error) {
       this.logger.error(
-        `❌ Exception while pushing metrics: ${error.message}`,
-        error.stack,
+        `❌ Exception while pushing metrics: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        error instanceof Error ? error.stack : undefined,
       );
     }
   }
