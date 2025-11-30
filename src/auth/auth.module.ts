@@ -15,6 +15,8 @@ import { CSRFGuard } from './guards/csrf.guard';
 import { CSRFController } from './csrf.controller';
 import { CommonModule } from '../common/common.module';
 import { AdminService } from '../admin/admin.service';
+import { InvitationService } from './invitation.service';
+import { InvitationController } from './invitation.controller';
 
 @Module({
   imports: [
@@ -36,7 +38,7 @@ import { AdminService } from '../admin/admin.service';
       inject: [ConfigService],
     }),
   ],
-  controllers: [AuthController, CSRFController],
+  controllers: [AuthController, CSRFController, InvitationController],
   providers: [
     AuthService,
     JwtStrategy,
@@ -45,6 +47,7 @@ import { AdminService } from '../admin/admin.service';
     CSRFService,
     CSRFGuard,
     AdminService,
+    InvitationService,
   ],
   exports: [
     AuthService,
@@ -53,6 +56,7 @@ import { AdminService } from '../admin/admin.service';
     SocialAuthService,
     PassportModule,
     AdminService,
+    InvitationService,
   ],
 })
 export class AuthModule {}

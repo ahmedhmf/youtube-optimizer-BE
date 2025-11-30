@@ -4,6 +4,7 @@ import {
   UnauthorizedException,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { SupabaseService } from '../supabase/supabase.service';
@@ -27,6 +28,7 @@ import {
   SubscriptionTier,
   SubscriptionStatus,
 } from '../DTO/subscription.dto';
+import { InvitationService } from './invitation.service';
 
 @Injectable()
 export class AuthService {
@@ -37,10 +39,24 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly socialAuthService: SocialAuthService,
     private readonly logAggregatorService: LogAggregatorService,
+    private readonly invitationService: InvitationService,
   ) {}
 
   async register(registerDto: RegisterDto): Promise<AuthResponse> {
-    const { email, password, name } = registerDto;
+    const { email, password, name, invitationCode } = registerDto;
+
+    // Validate invitation code (closed beta)
+    const invitationResult = await this.invitationService.validateInvitation({
+      code: invitationCode,
+      email,
+    });
+
+    if (!invitationResult.valid) {
+      throw new ForbiddenException(
+        invitationResult.reason || 'Invalid invitation code',
+      );
+    }
+
     const client = this.supabase.getClient();
 
     // Use Supabase Auth to create user
@@ -123,6 +139,17 @@ export class AuthService {
       createdAt: new Date(finalProfile.created_at ?? ''),
       updatedAt: new Date(finalProfile.updated_at ?? ''),
     };
+
+    // Mark invitation as used
+    if (invitationResult.invitation) {
+      await this.invitationService.markInvitationUsed(
+        invitationResult.invitation.id,
+        authData.user.id,
+      );
+      this.logger.log(
+        `User ${email} registered with invitation ${invitationCode}`,
+      );
+    }
 
     // Return Supabase tokens
     return {

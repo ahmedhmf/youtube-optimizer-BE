@@ -10,6 +10,7 @@ import { SocialAuthService } from 'src/auth/social-auth.service';
 import { CSRFService } from 'src/common/csrf.service';
 import { AdminService } from './admin.service';
 import { JwtModule, JwtService } from '@nestjs/jwt';
+import { InvitationService } from 'src/auth/invitation.service';
 
 @Module({
   imports: [SupabaseModule, HttpModule, CommonModule, JwtModule],
@@ -22,6 +23,7 @@ import { JwtModule, JwtService } from '@nestjs/jwt';
     CSRFService,
     CSRFGuard,
     AdminService,
+    InvitationService,
   ],
   exports: [AdminService],
 })

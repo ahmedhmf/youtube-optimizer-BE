@@ -33,7 +33,7 @@ export class AiService {
     const startTime = Date.now();
     try {
       const completion = await this.openai.chat.completions.create({
-        model: 'gpt-4o-mini',
+        model: 'gpt-4.1',
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.7,
       });
@@ -53,7 +53,7 @@ export class AiService {
         serviceName: 'AiService',
         message: 'OpenAI API call successful - generateVideoSuggestions',
         details: {
-          model: 'gpt-4o-mini',
+          model: 'gpt-4.1',
           videoTitle: video.title,
           promptTokens: completion.usage?.prompt_tokens,
           completionTokens: completion.usage?.completion_tokens,

@@ -35,6 +35,13 @@ export class RegisterDto {
   @MaxLength(128, { message: 'Password must not exceed 128 characters' })
   password: string;
 
+  @ApiProperty({
+    example: 'BETA-A1B2-C3D4',
+    description: 'Invitation code required for registration (closed beta)',
+  })
+  @IsString({ message: 'Invitation code must be a string' })
+  invitationCode: string;
+
   @ApiPropertyOptional({
     example: 'John Doe',
     description: 'User full name',
