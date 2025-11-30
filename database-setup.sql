@@ -1,25 +1,423 @@
--- Create the audits table if it doesn't exist
-CREATE TABLE IF NOT EXISTS audits (
-  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-  user_id text NOT NULL,
+-- WARNING: This schema is for context only and is not meant to be run.
+-- Table order and constraints may not be valid for execution.
+
+CREATE TABLE public.api_request_logs (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  request_id character varying NOT NULL UNIQUE,
+  user_id uuid,
+  endpoint character varying NOT NULL,
+  method character varying NOT NULL,
+  status_code integer NOT NULL,
+  response_time_ms integer NOT NULL,
+  request_size_bytes integer,
+  response_size_bytes integer,
+  ip_address inet,
+  user_agent text,
+  referrer text,
+  query_params jsonb DEFAULT '{}'::jsonb,
+  request_body jsonb,
+  response_body jsonb,
+  headers jsonb DEFAULT '{}'::jsonb,
+  error_message text,
+  rate_limit_hit boolean DEFAULT false,
+  cached boolean DEFAULT false,
+  session_id uuid,
+  device_id character varying,
+  geographical_location jsonb,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT api_request_logs_pkey PRIMARY KEY (id),
+  CONSTRAINT api_request_logs_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id)
+);
+CREATE TABLE public.audit_trail (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  actor_id uuid,
+  actor_email character varying,
+  actor_role character varying,
+  action character varying NOT NULL,
+  entity_type character varying NOT NULL,
+  entity_id character varying,
+  old_values jsonb,
+  new_values jsonb,
+  changes jsonb,
+  ip_address inet,
+  user_agent text,
+  session_id uuid,
+  request_id character varying,
+  reason text,
+  metadata jsonb DEFAULT '{}'::jsonb,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT audit_trail_pkey PRIMARY KEY (id),
+  CONSTRAINT audit_trail_actor_id_fkey FOREIGN KEY (actor_id) REFERENCES public.profiles(id)
+);
+CREATE TABLE public.audits (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid,
   video_url text NOT NULL,
   video_title text,
-  ai_titles text[],
+  ai_titles ARRAY,
   ai_description text,
-  ai_tags text[],
-  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL,
-  updated_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
+  ai_tags ARRAY,
+  created_at timestamp without time zone DEFAULT now(),
+  thumbnail_url text,
+  ai_image_prompt text,
+  CONSTRAINT audits_pkey PRIMARY KEY (id),
+  CONSTRAINT audits_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id)
 );
-
--- Create an index on user_id for faster queries
-CREATE INDEX IF NOT EXISTS audits_user_id_idx ON audits(user_id);
-
--- Create an index on created_at for faster sorting
-CREATE INDEX IF NOT EXISTS audits_created_at_idx ON audits(created_at);
-
--- Enable Row Level Security (RLS)
-ALTER TABLE audits ENABLE ROW LEVEL SECURITY;
-
--- Create a policy that allows all operations for now (you can make this more restrictive later)
-CREATE POLICY "Allow all operations on audits" ON audits
-FOR ALL USING (true) WITH CHECK (true);
+CREATE TABLE public.billing_history (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL,
+  subscription_id uuid,
+  stripe_invoice_id text,
+  amount integer NOT NULL CHECK (amount >= 0),
+  currency text NOT NULL DEFAULT 'USD'::text,
+  status text NOT NULL DEFAULT 'pending'::text CHECK (status = ANY (ARRAY['pending'::text, 'paid'::text, 'failed'::text, 'refunded'::text])),
+  billing_date timestamp with time zone NOT NULL,
+  paid_at timestamp with time zone,
+  description text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT billing_history_pkey PRIMARY KEY (id),
+  CONSTRAINT billing_history_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT billing_history_subscription_id_fkey FOREIGN KEY (subscription_id) REFERENCES public.user_subscriptions(id)
+);
+CREATE TABLE public.error_logs (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  error_code character varying,
+  error_type character varying NOT NULL,
+  message text NOT NULL,
+  severity character varying NOT NULL DEFAULT 'error'::character varying,
+  stack_trace text,
+  context jsonb DEFAULT '{}'::jsonb,
+  user_id uuid,
+  endpoint character varying,
+  method character varying,
+  status_code integer,
+  ip_address inet,
+  user_agent text,
+  request_id character varying,
+  resolved boolean DEFAULT false,
+  resolved_at timestamp with time zone,
+  resolved_by uuid,
+  resolution_notes text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  occurrences integer DEFAULT 1,
+  first_occurred_at timestamp with time zone DEFAULT now(),
+  last_occurred_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT error_logs_pkey PRIMARY KEY (id),
+  CONSTRAINT error_logs_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id),
+  CONSTRAINT error_logs_resolved_by_fkey FOREIGN KEY (resolved_by) REFERENCES public.profiles(id)
+);
+CREATE TABLE public.feature_requests (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL,
+  feature_name character varying NOT NULL,
+  description text NOT NULL,
+  use_case text NOT NULL,
+  importance integer NOT NULL CHECK (importance >= 1 AND importance <= 10),
+  willingness_to_pay integer CHECK (willingness_to_pay >= 1 AND willingness_to_pay <= 10),
+  categories ARRAY,
+  votes integer NOT NULL DEFAULT 1,
+  status character varying NOT NULL DEFAULT 'submitted'::character varying CHECK (status::text = ANY (ARRAY['submitted'::character varying, 'under_review'::character varying, 'planned'::character varying, 'in_development'::character varying, 'completed'::character varying, 'rejected'::character varying]::text[])),
+  admin_priority character varying CHECK (admin_priority::text = ANY (ARRAY['low'::character varying, 'medium'::character varying, 'high'::character varying, 'critical'::character varying]::text[])),
+  estimated_effort character varying CHECK (estimated_effort::text = ANY (ARRAY['small'::character varying, 'medium'::character varying, 'large'::character varying, 'xlarge'::character varying]::text[])),
+  target_release character varying,
+  admin_notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT feature_requests_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.feature_votes (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL,
+  feature_request_id uuid NOT NULL,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT feature_votes_pkey PRIMARY KEY (id),
+  CONSTRAINT feature_votes_feature_request_id_fkey FOREIGN KEY (feature_request_id) REFERENCES public.feature_requests(id)
+);
+CREATE TABLE public.ip_rate_limits (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  ip_address inet NOT NULL,
+  endpoint character varying NOT NULL,
+  request_count integer NOT NULL DEFAULT 0,
+  window_start timestamp with time zone NOT NULL DEFAULT now(),
+  blocked_until timestamp with time zone,
+  first_request timestamp with time zone NOT NULL DEFAULT now(),
+  last_request timestamp with time zone NOT NULL DEFAULT now(),
+  user_agent text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT ip_rate_limits_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.job_queue (
+  id integer NOT NULL DEFAULT nextval('job_queue_id_seq'::regclass),
+  user_id uuid,
+  job_type character varying NOT NULL,
+  status character varying DEFAULT 'pending'::character varying CHECK (status::text = ANY (ARRAY['pending'::character varying::text, 'processing'::character varying::text, 'completed'::character varying::text, 'failed'::character varying::text, 'cancelled'::character varying::text])),
+  payload jsonb NOT NULL,
+  result jsonb,
+  error_message text,
+  progress integer DEFAULT 0 CHECK (progress >= 0 AND progress <= 100),
+  created_at timestamp with time zone DEFAULT now(),
+  started_at timestamp with time zone,
+  completed_at timestamp with time zone,
+  CONSTRAINT job_queue_pkey PRIMARY KEY (id),
+  CONSTRAINT job_queue_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id),
+  CONSTRAINT job_queue_user_id_fkey1 FOREIGN KEY (user_id) REFERENCES public.profiles(id)
+);
+CREATE TABLE public.payment_methods (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL,
+  stripe_payment_method_id text NOT NULL UNIQUE,
+  is_default boolean NOT NULL DEFAULT false,
+  card_brand text,
+  card_last_four text,
+  card_exp_month integer CHECK (card_exp_month >= 1 AND card_exp_month <= 12),
+  card_exp_year integer CHECK (card_exp_year::numeric >= EXTRACT(year FROM now())),
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT payment_methods_pkey PRIMARY KEY (id),
+  CONSTRAINT payment_methods_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.profiles (
+  id uuid NOT NULL,
+  email character varying NOT NULL UNIQUE,
+  name character varying,
+  last_login timestamp with time zone,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  role character varying DEFAULT 'user'::character varying CHECK (role::text = ANY (ARRAY['user'::character varying::text, 'admin'::character varying::text, 'moderator'::character varying::text])),
+  picture text,
+  provider character varying DEFAULT 'email'::character varying,
+  token_version integer DEFAULT 0,
+  CONSTRAINT profiles_pkey PRIMARY KEY (id),
+  CONSTRAINT profiles_id_fkey FOREIGN KEY (id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.profiles_backup (
+  id uuid,
+  email character varying,
+  name character varying,
+  password_hash character varying,
+  last_login timestamp with time zone,
+  created_at timestamp with time zone,
+  updated_at timestamp with time zone,
+  role character varying,
+  picture text,
+  provider character varying,
+  token_version integer
+);
+CREATE TABLE public.promo_code_usage (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  promo_code_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  subscription_id uuid,
+  used_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT promo_code_usage_pkey PRIMARY KEY (id),
+  CONSTRAINT promo_code_usage_promo_code_id_fkey FOREIGN KEY (promo_code_id) REFERENCES public.promo_codes(id),
+  CONSTRAINT promo_code_usage_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT promo_code_usage_subscription_id_fkey FOREIGN KEY (subscription_id) REFERENCES public.user_subscriptions(id)
+);
+CREATE TABLE public.promo_codes (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  code text NOT NULL UNIQUE,
+  description text,
+  discount_percentage integer CHECK (discount_percentage IS NULL OR discount_percentage > 0 AND discount_percentage <= 100),
+  discount_amount integer CHECK (discount_amount IS NULL OR discount_amount > 0),
+  valid_from timestamp with time zone NOT NULL DEFAULT now(),
+  valid_until timestamp with time zone,
+  max_uses integer,
+  current_uses integer NOT NULL DEFAULT 0,
+  applicable_tiers ARRAY,
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT promo_codes_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.security_events (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  user_id uuid,
+  event_type character varying NOT NULL,
+  ip_address inet,
+  user_agent text,
+  device_id character varying,
+  metadata jsonb,
+  created_at timestamp with time zone DEFAULT now(),
+  event_category character varying NOT NULL DEFAULT 'security'::character varying,
+  severity character varying NOT NULL DEFAULT 'info'::character varying,
+  resource_type character varying,
+  resource_id character varying,
+  action character varying,
+  status character varying,
+  request_id character varying,
+  CONSTRAINT security_events_pkey PRIMARY KEY (id),
+  CONSTRAINT security_events_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id)
+);
+CREATE TABLE public.subscription_limits (
+  tier character varying NOT NULL,
+  video_analysis_limit integer NOT NULL,
+  token_limit integer NOT NULL,
+  api_calls_limit integer NOT NULL,
+  features jsonb DEFAULT '{}'::jsonb,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT subscription_limits_pkey PRIMARY KEY (tier)
+);
+CREATE TABLE public.system_logs (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  log_level character varying NOT NULL,
+  category character varying NOT NULL,
+  service_name character varying NOT NULL,
+  message text NOT NULL,
+  details jsonb DEFAULT '{}'::jsonb,
+  stack_trace text,
+  hostname character varying,
+  process_id integer,
+  memory_usage_mb integer,
+  cpu_usage_percent numeric,
+  related_entity_type character varying,
+  related_entity_id character varying,
+  request_id character varying,
+  resolved boolean DEFAULT false,
+  resolved_at timestamp with time zone,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT system_logs_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.usage_events (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL,
+  feature character varying NOT NULL,
+  metadata jsonb,
+  satisfaction integer CHECK (satisfaction >= 1 AND satisfaction <= 5),
+  session_id character varying,
+  ip_address inet,
+  user_agent text,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT usage_events_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.user_feedbacks (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL,
+  type character varying NOT NULL CHECK (type::text = ANY (ARRAY['bug_report'::character varying, 'feature_request'::character varying, 'improvement'::character varying, 'general'::character varying, 'usability'::character varying]::text[])),
+  title character varying NOT NULL,
+  description text NOT NULL,
+  priority character varying CHECK (priority::text = ANY (ARRAY['low'::character varying, 'medium'::character varying, 'high'::character varying, 'critical'::character varying]::text[])),
+  tags ARRAY,
+  current_page character varying,
+  user_agent text,
+  ip_address inet,
+  status character varying NOT NULL DEFAULT 'new'::character varying CHECK (status::text = ANY (ARRAY['new'::character varying, 'in_review'::character varying, 'planned'::character varying, 'completed'::character varying, 'rejected'::character varying]::text[])),
+  admin_notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT user_feedbacks_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.user_logs (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  user_id uuid,
+  log_type character varying NOT NULL,
+  activity_type character varying NOT NULL,
+  description text NOT NULL,
+  severity character varying NOT NULL DEFAULT 'info'::character varying,
+  ip_address inet,
+  user_agent text,
+  device_id character varying,
+  session_id uuid,
+  request_id character varying,
+  metadata jsonb DEFAULT '{}'::jsonb,
+  stack_trace text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  resolved_at timestamp with time zone,
+  resolved_by uuid,
+  CONSTRAINT user_logs_pkey PRIMARY KEY (id),
+  CONSTRAINT user_logs_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id),
+  CONSTRAINT user_logs_resolved_by_fkey FOREIGN KEY (resolved_by) REFERENCES public.profiles(id)
+);
+CREATE TABLE public.user_onboarding (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL UNIQUE,
+  current_step text NOT NULL DEFAULT 'welcome'::text CHECK (current_step = ANY (ARRAY['welcome'::text, 'user_type'::text, 'first_analysis'::text, 'features_tour'::text, 'preferences'::text, 'completed'::text])),
+  completed_steps ARRAY DEFAULT ARRAY[]::text[],
+  user_type text CHECK (user_type IS NULL OR (user_type = ANY (ARRAY['content_creator'::text, 'business_owner'::text, 'marketer'::text, 'hobbyist'::text, 'agency'::text]))),
+  content_categories ARRAY CHECK (content_categories IS NULL OR content_categories <@ ARRAY['educational'::text, 'entertainment'::text, 'gaming'::text, 'lifestyle'::text, 'business'::text, 'technology'::text, 'health_fitness'::text, 'travel'::text, 'other'::text]),
+  monthly_video_count integer CHECK (monthly_video_count IS NULL OR monthly_video_count >= 0),
+  channel_name text,
+  first_analysis_completed boolean DEFAULT false,
+  first_analysis_rating integer CHECK (first_analysis_rating >= 1 AND first_analysis_rating <= 5),
+  preferences jsonb DEFAULT '{}'::jsonb,
+  completed_at timestamp with time zone,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT user_onboarding_pkey PRIMARY KEY (id),
+  CONSTRAINT user_onboarding_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.user_sessions_backup (
+  id uuid,
+  user_id uuid,
+  email character varying,
+  role character varying,
+  device_id character varying,
+  ip_address inet,
+  user_agent text,
+  created_at timestamp with time zone,
+  last_activity timestamp with time zone
+);
+CREATE TABLE public.user_subscriptions (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL UNIQUE,
+  tier USER-DEFINED NOT NULL DEFAULT 'free'::subscription_tier,
+  status USER-DEFINED NOT NULL DEFAULT 'active'::subscription_status,
+  billing_interval USER-DEFINED NOT NULL DEFAULT 'monthly'::billing_interval,
+  current_period_start timestamp with time zone NOT NULL DEFAULT now(),
+  current_period_end timestamp with time zone NOT NULL,
+  auto_renew boolean NOT NULL DEFAULT true,
+  amount integer NOT NULL DEFAULT 0 CHECK (amount >= 0),
+  currency text NOT NULL DEFAULT 'USD'::text CHECK (currency = ANY (ARRAY['USD'::text, 'EUR'::text, 'GBP'::text])),
+  stripe_subscription_id text,
+  stripe_customer_id text,
+  trial_end timestamp with time zone,
+  cancelled_at timestamp with time zone,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT user_subscriptions_pkey PRIMARY KEY (id),
+  CONSTRAINT user_subscriptions_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.user_token_usage (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  user_id uuid NOT NULL,
+  feature_type character varying NOT NULL,
+  tokens_consumed integer NOT NULL DEFAULT 0,
+  request_count integer NOT NULL DEFAULT 1,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  metadata jsonb DEFAULT '{}'::jsonb,
+  CONSTRAINT user_token_usage_pkey PRIMARY KEY (id),
+  CONSTRAINT user_token_usage_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id)
+);
+CREATE TABLE public.video_analysis_logs (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  user_id uuid,
+  audit_id uuid,
+  video_id character varying NOT NULL,
+  video_url text NOT NULL,
+  video_title text,
+  analysis_type character varying NOT NULL,
+  status character varying NOT NULL,
+  stage character varying,
+  progress_percentage integer DEFAULT 0,
+  tokens_consumed integer DEFAULT 0,
+  prompt_tokens integer DEFAULT 0,
+  completion_tokens integer DEFAULT 0,
+  model_used character varying,
+  cost_usd numeric,
+  processing_time_ms integer,
+  error_message text,
+  error_code character varying,
+  retry_count integer DEFAULT 0,
+  metadata jsonb DEFAULT '{}'::jsonb,
+  results jsonb,
+  initiated_at timestamp with time zone NOT NULL DEFAULT now(),
+  started_at timestamp with time zone,
+  completed_at timestamp with time zone,
+  failed_at timestamp with time zone,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT video_analysis_logs_pkey PRIMARY KEY (id),
+  CONSTRAINT video_analysis_logs_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id),
+  CONSTRAINT video_analysis_logs_audit_id_fkey FOREIGN KEY (audit_id) REFERENCES public.audits(id)
+);

@@ -22,7 +22,15 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "debug": "dotenv -e .env -- node --inspect-brk -r ts-node/register src/main.ts"
+    "debug": "dotenv -e .env -- node --inspect-brk -r ts-node/register src/main.ts",
+    "db:link": "supabase link --project-ref idhvaindezqzzgghjqlf",
+    "db:status": "supabase db diff --schema public",
+    "db:push": "supabase db push",
+    "db:reset": "supabase db reset",
+    "db:pull": "supabase db pull",
+    "db:migration:new": "supabase migration new",
+    "db:migration:up": "supabase db push",
+    "db:migration:list": "supabase migration list"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",
@@ -96,6 +104,7 @@
     "jest": "^30.0.0",
     "prettier": "^3.4.2",
     "source-map-support": "^0.5.21",
+    "supabase": "^2.63.1",
     "supertest": "^7.0.0",
     "ts-jest": "^29.2.5",
     "ts-loader": "^9.5.2",
