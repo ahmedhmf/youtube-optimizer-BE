@@ -10,8 +10,38 @@ export class UserLogService {
 
   /**
    * Log user activity
+   * NOTE: Only logs CRITICAL user events to Supabase for long-term storage
+   * Routine activities are logged via Winston file logging
    */
   async logActivity(data: UserLogData): Promise<void> {
+    // Define critical user events that should be stored in Supabase
+    const criticalActivityTypes = [
+      'user_registration',
+      'user_login',
+      'user_logout',
+      'user_registration_failed',
+      'password_change',
+      'password_reset',
+      'email_change',
+      'account_deletion',
+      'subscription_change',
+      'payment_success',
+      'payment_failed',
+      'two_factor_enabled',
+      'two_factor_disabled',
+    ];
+
+    const isCritical = 
+      criticalActivityTypes.includes(data.activityType) ||
+      data.severity === LogSeverity.ERROR ||
+      data.severity === LogSeverity.CRITICAL ||
+      data.logType === LogType.SECURITY;
+
+    if (!isCritical) {
+      // Skip Supabase logging for routine activities - Winston handles this
+      return;
+    }
+
     const client = this.supabase.getServiceClient();
 
     try {
@@ -32,12 +62,12 @@ export class UserLogService {
       });
 
       if (error) {
-        this.logger.error('Failed to log user activity:', error);
+        this.logger.error('Failed to log critical user activity:', error);
         // Store in fallback mechanism (see Step 8)
         void this.storeFallback('user_logs', data);
       }
     } catch (error) {
-      this.logger.error('Exception logging user activity:', error);
+      this.logger.error('Exception logging critical user activity:', error);
       void this.storeFallback('user_logs', data);
     }
   }

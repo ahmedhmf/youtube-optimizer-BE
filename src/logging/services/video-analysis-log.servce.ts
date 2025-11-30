@@ -11,6 +11,8 @@ export class VideoAnalysisLogService {
 
   /**
    * Create video analysis log
+   * NOTE: Video analysis is a CORE BUSINESS FEATURE - always logged to Supabase
+   * Also logged to Winston for detailed debugging
    */
   async createLog(data: VideoAnalysisLogData): Promise<string> {
     const client = this.supabase.getServiceClient();

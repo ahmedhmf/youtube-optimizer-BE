@@ -18,8 +18,26 @@ export class SystemLogService {
 
   /**
    * Log system event
+   * NOTE: Only logs CRITICAL system events to Supabase
+   * Routine system logs are handled via Winston file logging
    */
   async logSystem(data: SystemLogData): Promise<void> {
+    // Only log critical and error level system events to Supabase
+    const isCritical =
+      data.logLevel === LogSeverity.CRITICAL ||
+      data.logLevel === LogSeverity.ERROR ||
+      data.category === SystemLogCategory.DATABASE ||
+      data.category === SystemLogCategory.CRON;
+
+    if (!isCritical) {
+      // Skip Supabase logging for routine system events - Winston handles this
+      // Still log to console for visibility
+      if (data.logLevel === LogSeverity.WARNING) {
+        this.logger.warn(`[${data.category}] ${data.message}`);
+      }
+      return;
+    }
+
     const client = this.supabase.getServiceClient();
 
     try {
@@ -42,21 +60,13 @@ export class SystemLogService {
       });
 
       if (error) {
-        this.logger.error('Failed to log system event:', error);
+        this.logger.error('Failed to log critical system event:', error);
       }
 
       // Also log to console for critical errors
-      if (
-        data.logLevel === LogSeverity.CRITICAL ||
-        data.logLevel === LogSeverity.ERROR
-      ) {
-        this.logger.error(
-          `[${data.category}] ${data.message}`,
-          data.stackTrace,
-        );
-      }
+      this.logger.error(`[${data.category}] ${data.message}`, data.stackTrace);
     } catch (error) {
-      this.logger.error('Exception logging system event:', error);
+      this.logger.error('Exception logging critical system event:', error);
     }
   }
 

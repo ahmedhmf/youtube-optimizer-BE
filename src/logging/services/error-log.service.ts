@@ -10,6 +10,8 @@ export class ErrorLogService {
 
   /**
    * Log application error with deduplication
+   * NOTE: All errors are considered CRITICAL and logged to Supabase
+   * Also logged to Winston files for detailed debugging
    */
   async logError(data: ErrorLogData): Promise<void> {
     const client = this.supabase.getServiceClient();

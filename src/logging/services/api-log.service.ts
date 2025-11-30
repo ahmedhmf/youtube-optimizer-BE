@@ -17,10 +17,24 @@ export class ApiLogService {
 
   /**
    * Log API request (adds to queue for batch insert)
+   * NOTE: Disabled for routine requests - now using Winston file logging
+   * Only logs critical API events (errors, rate limits) to Supabase
    */
   async logRequest(data: ApiLogData): Promise<void> {
     try {
-      // Add to queue for batch processing
+      // Only log to Supabase if it's a critical event
+      const isCritical = 
+        data.statusCode >= 500 || // Server errors
+        data.rateLimitHit || // Rate limit exceeded
+        data.statusCode === 401 || // Unauthorized
+        data.statusCode === 403; // Forbidden
+
+      if (!isCritical) {
+        // Skip Supabase logging for normal requests - Winston handles this
+        return;
+      }
+
+      // Add critical events to queue for batch processing
       this.logQueue.push(data);
 
       // If queue is full, process immediately
