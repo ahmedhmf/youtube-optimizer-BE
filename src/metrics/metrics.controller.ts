@@ -5,14 +5,14 @@ import { Controller, Get, Query } from '@nestjs/common';
 import { register } from 'prom-client';
 import { AlertService } from './alert.service';
 
-@Controller('api/v1/metrics')
+@Controller('api/v1')
 export class MetricsController {
   constructor(private readonly alertService: AlertService) {}
   /**
    * Get metrics in JSON format for frontend dashboard
-   * Access at: GET /api/v1/metrics/dashboard
+   * Access at: GET /api/v1/metrics-dashboard
    */
-  @Get('dashboard')
+  @Get('metrics-dashboard')
   async getDashboardMetrics() {
     const metrics: any = await register.getMetricsAsJSON();
 
@@ -58,9 +58,9 @@ export class MetricsController {
 
   /**
    * Get all metrics in JSON format
-   * Access at: GET /api/v1/metrics/json
+   * Access at: GET /api/v1/metrics-json
    */
-  @Get('json')
+  @Get('metrics-json')
   async getMetricsJson() {
     const metrics: any = await register.getMetricsAsJSON();
 
@@ -91,7 +91,7 @@ export class MetricsController {
 
   /**
    * Test alert system
-   * Access at: GET /api/v1/metrics/test-alert?channel=telegram
+   * Access at: GET /api/v1/test-alert?channel=telegram
    */
   @Get('test-alert')
   async testAlert(@Query('channel') channel: string) {
