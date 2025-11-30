@@ -12,7 +12,7 @@ import { GrafanaPushService } from './grafana-push.service';
 @Module({
   imports: [
     PrometheusModule.register({
-      path: '/metrics',
+      path: '/query',
       defaultMetrics: {
         enabled: true,
         config: {
