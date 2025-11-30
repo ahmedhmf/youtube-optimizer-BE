@@ -8,11 +8,13 @@ import {
 import { MetricsService } from './metrics.service';
 import { MetricsMiddleware } from './metrics.middleware';
 import { GrafanaPushService } from './grafana-push.service';
+import { MetricsController } from './metrics.controller';
+import { AlertService } from './alert.service';
 
 @Module({
   imports: [
     PrometheusModule.register({
-      path: '/query',
+      path: '/metrics',
       defaultMetrics: {
         enabled: true,
         config: {
@@ -22,10 +24,12 @@ import { GrafanaPushService } from './grafana-push.service';
       global: true, // Make metrics available globally
     }),
   ],
+  controllers: [MetricsController],
   providers: [
     MetricsService,
     MetricsMiddleware,
     GrafanaPushService,
+    AlertService,
     // HTTP Request Counter
     makeCounterProvider({
       name: 'http_requests_total',
