@@ -2,11 +2,16 @@
 import { Controller, Get, Query, BadRequestException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { YoutubeService } from './youtube.service';
+import { StructuredLoggerService } from '../logging/structured-logger.service';
+import { CorrelationId } from '../logging/decorators/correlation-id.decorator';
 
 @ApiTags('YouTube Integration')
 @Controller('youtube')
 export class YoutubeController {
-  constructor(private readonly yt: YoutubeService) {}
+  constructor(
+    private readonly yt: YoutubeService,
+    private readonly logger: StructuredLoggerService,
+  ) {}
 
   @Get('video')
   @ApiOperation({
@@ -64,8 +69,26 @@ export class YoutubeController {
     status: 404,
     description: 'Video not found or unavailable',
   })
-  async getVideo(@Query('url') url: string) {
+  async getVideo(
+    @Query('url') url: string,
+    @CorrelationId() correlationId: string,
+  ) {
+    // Log the incoming request
+    this.logger.logWithCorrelation(
+      'info',
+      'Fetching YouTube video metadata',
+      correlationId,
+      'YoutubeController',
+      { url },
+    );
+
     if (!url) {
+      this.logger.logWithCorrelation(
+        'warn',
+        'Missing YouTube URL parameter',
+        correlationId,
+        'YoutubeController',
+      );
       throw new BadRequestException('YouTube URL is required');
     }
 
@@ -73,9 +96,35 @@ export class YoutubeController {
     const youtubeRegex =
       /^https?:\/\/(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
     if (!youtubeRegex.test(url)) {
+      this.logger.logWithCorrelation(
+        'warn',
+        'Invalid YouTube URL format',
+        correlationId,
+        'YoutubeController',
+        { url },
+      );
       throw new BadRequestException('Invalid YouTube URL format');
     }
 
-    return this.yt.getVideoData(url);
+    try {
+      const videoData = await this.yt.getVideoData(url);
+
+      // Log successful video fetch
+      this.logger.logBusinessEvent(
+        correlationId,
+        'YOUTUBE_VIDEO_FETCHED',
+        undefined,
+        {
+          videoId: videoData.id,
+          title: videoData.title,
+          views: videoData.views,
+        },
+      );
+
+      return videoData;
+    } catch (error) {
+      this.logger.logError(correlationId, error, 'YoutubeController', { url });
+      throw error;
+    }
   }
 }

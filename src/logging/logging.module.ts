@@ -1,4 +1,4 @@
-import { Global, Module } from '@nestjs/common';
+import { Global, Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
 import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
 import { SupabaseModule } from 'src/supabase/supabase.module';
 import { GlobalExceptionFilter } from './global-exception.filter';
@@ -12,6 +12,9 @@ import { SystemLogService } from './services/system-log.service';
 import { UserLogService } from './services/user-log.service';
 import { VideoAnalysisLogService } from './services/video-analysis-log.servce';
 import { HealthMonitorService } from './services/health-monitor.service';
+import { StructuredLoggerService } from './structured-logger.service';
+import { CorrelationIdMiddleware } from './correlation-id.middleware';
+import { RequestLoggingMiddleware } from './request-logging.middleware';
 
 @Global()
 @Module({
@@ -25,6 +28,7 @@ import { HealthMonitorService } from './services/health-monitor.service';
     SystemLogService,
     LogAggregatorService,
     HealthMonitorService,
+    StructuredLoggerService,
 
     // Global error filter
     {
@@ -51,6 +55,13 @@ import { HealthMonitorService } from './services/health-monitor.service';
     SystemLogService,
     LogAggregatorService,
     HealthMonitorService,
+    StructuredLoggerService,
   ],
 })
-export class LoggingModule {}
+export class LoggingModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer
+      .apply(CorrelationIdMiddleware, RequestLoggingMiddleware)
+      .forRoutes('*');
+  }
+}

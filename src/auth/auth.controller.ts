@@ -45,6 +45,8 @@ import { PasswordSecurityService } from 'src/common/password-security.service';
 import { UserLogService } from 'src/logging/services/user-log.service';
 import { LogSeverity, LogType } from 'src/logging/dto/log.types';
 import { LogAggregatorService } from 'src/logging/services/log-aggregator.service';
+import { StructuredLoggerService } from 'src/logging/structured-logger.service';
+import { CorrelationId } from 'src/logging/decorators/correlation-id.decorator';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -57,6 +59,7 @@ export class AuthController {
     private readonly passwordSecurityService: PasswordSecurityService,
     private readonly userLogService: UserLogService,
     private readonly logAggregatorService: LogAggregatorService,
+    private readonly structuredLogger: StructuredLoggerService,
   ) {}
 
   @Post('register')
@@ -162,9 +165,22 @@ export class AuthController {
   async register(
     @Body() registerDto: RegisterDto,
     @Req() req: express.Request,
+    @CorrelationId() correlationId: string,
   ) {
     const ipAddress = req.ip || req.connection.remoteAddress;
     const userAgent = req.get('user-agent');
+
+    // Log registration attempt
+    this.structuredLogger.logWithCorrelation(
+      'info',
+      'User registration attempt',
+      correlationId,
+      'AuthController',
+      {
+        email: registerDto.email,
+        ipAddress,
+      },
+    );
 
     try {
       // Validate password security before registration
@@ -176,6 +192,17 @@ export class AuthController {
       );
 
       const result = await this.authService.register(registerDto);
+
+      // Log successful registration with structured logger
+      this.structuredLogger.logBusinessEvent(
+        correlationId,
+        'USER_REGISTRATION_SUCCESS',
+        result.user?.id,
+        {
+          email: registerDto.email,
+          ipAddress,
+        },
+      );
 
       // Log successful registration
       await this.userLogService.logActivity({
@@ -194,6 +221,18 @@ export class AuthController {
 
       return result;
     } catch (error) {
+      // Log failed registration with structured logger
+      this.structuredLogger.logError(
+        correlationId,
+        error,
+        'AuthController',
+        {
+          email: registerDto.email,
+          ipAddress,
+          action: 'registration',
+        },
+      );
+
       // Log failed registration attempt
       await this.userLogService.logActivity({
         logType: LogType.SECURITY,
@@ -314,9 +353,23 @@ export class AuthController {
     @Body() loginDto: LoginDto,
     @Req() req: express.Request,
     @Res() res: express.Response,
+    @CorrelationId() correlationId: string,
   ): Promise<express.Response<any, Record<string, any>>> {
     const ipAddress = req.ip;
     const userAgent = req.get('User-Agent');
+
+    // Log login attempt
+    this.structuredLogger.logWithCorrelation(
+      'info',
+      'User login attempt',
+      correlationId,
+      'AuthController',
+      {
+        email: loginDto.email,
+        ipAddress,
+        method: 'session',
+      },
+    );
 
     try {
       // Use enhanced session security login
@@ -330,6 +383,19 @@ export class AuthController {
           ipAddress,
           userAgent,
         );
+
+      // Log successful login with structured logger
+      this.structuredLogger.logBusinessEvent(
+        correlationId,
+        'USER_LOGIN_SUCCESS',
+        result.user?.id,
+        {
+          email: loginDto.email,
+          loginMethod: 'session',
+          passwordBreached: passwordCheck.shouldForcePasswordChange,
+          ipAddress,
+        },
+      );
 
       // Log successful login
       await this.auditLoggingService.logAuthEvent(
@@ -512,7 +578,20 @@ export class AuthController {
   async logout(
     @Req() req: express.Request,
     @Res() res: express.Response,
+    @CorrelationId() correlationId: string,
   ): Promise<express.Response<any, Record<string, any>>> {
+    const userId = (req as any).user?.id;
+
+    // Log logout attempt
+    this.structuredLogger.logBusinessEvent(
+      correlationId,
+      'USER_LOGOUT',
+      userId,
+      {
+        ipAddress: req.ip,
+      },
+    );
+
     const token = this.extractTokenFromHeader(req);
     if (!token) {
       res.clearCookie('refresh_token', {

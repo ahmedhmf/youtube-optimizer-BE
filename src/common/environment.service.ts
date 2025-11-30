@@ -246,4 +246,12 @@ export class EnvironmentService {
       '',
     );
   }
+
+  // Logging Configuration
+  getLogRetentionDays(): number {
+    return parseInt(
+      this.configService.get<string>('LOG_RETENTION_DAYS', '14'),
+      10,
+    );
+  }
 }
