@@ -5,7 +5,7 @@ import { Controller, Get, Query } from '@nestjs/common';
 import { register } from 'prom-client';
 import { AlertService } from './alert.service';
 
-@Controller('api/v1')
+@Controller()
 export class MetricsController {
   constructor(private readonly alertService: AlertService) {}
   /**
@@ -78,9 +78,9 @@ export class MetricsController {
   private sumMetricValues(metric: any): number {
     if (!metric?.values) return 0;
     return metric.values.reduce(
-      (sum: number, v: any) => sum + (v.value || 0),
+      (sum: number, v: any) => sum + (Number(v.value) || 0),
       0,
-    );
+    ) as number;
   }
 
   private calculateAverage(metric: any): number {

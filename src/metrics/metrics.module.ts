@@ -8,8 +8,8 @@ import {
 import { MetricsService } from './metrics.service';
 import { MetricsMiddleware } from './metrics.middleware';
 import { GrafanaPushService } from './grafana-push.service';
-import { MetricsController } from './metrics.controller';
 import { AlertService } from './alert.service';
+import { MetricsController } from './metrics.controller';
 
 @Module({
   imports: [
