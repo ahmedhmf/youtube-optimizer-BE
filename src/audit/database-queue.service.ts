@@ -653,20 +653,63 @@ export class DatabaseQueueService implements OnModuleInit {
     jobId: string,
     configuration: AiMessageConfiguration,
   ): Promise<AuditResponse> {
-    await this.updateJobProgress(jobId, 30);
+    await this.updateJobProgress(jobId, 20);
 
+    // Get video metadata and transcript
     const video = await this.youtubeService.getVideoData(configuration.url);
-
-    await this.updateJobProgress(jobId, 60);
-
-    const suggestions = await this.aiService.generateVideoSuggestions(
-      video,
-      configuration.language,
-      configuration.tone,
-      configuration.model,
+    const transcript = await this.youtubeService.getVideoTranscript(
+      configuration.url,
     );
 
-    const videoData: AuditResponse = { video, suggestions };
+    await this.updateJobProgress(jobId, 40);
+
+    // Generate comprehensive analysis using new methods
+    const language = configuration.language || 'en';
+    const tone = configuration.tone || 'professional';
+
+    const [titleRewrite, descriptionRewrite, keywordExtraction, chapters] =
+      await Promise.all([
+        this.aiService.generateTitleRewrite(
+          transcript,
+          language,
+          tone,
+          video.title,
+        ),
+        this.aiService.generateDescriptionRewrite(transcript),
+        this.aiService.extractKeywords(transcript),
+        this.aiService.generateChapters(transcript),
+      ]);
+
+    await this.updateJobProgress(jobId, 80);
+
+    // Optionally generate thumbnail ideas (can be skipped for faster processing)
+    let thumbnailIdeas: any[] = [];
+    let thumbnailAIPrompts: string[] = [];
+    
+    try {
+      [thumbnailIdeas, thumbnailAIPrompts] = await Promise.all([
+        this.aiService.generateThumbnailIdeas(transcript),
+        this.aiService.generateThumbnailAIPrompts(transcript),
+      ]);
+    } catch (error) {
+      this.logger.warn(
+        'Thumbnail generation failed, continuing without it',
+        error,
+      );
+    }
+
+    const videoData: AuditResponse = {
+      video,
+      analysis: {
+        titleRewrite,
+        descriptionRewrite,
+        keywordExtraction,
+        chapters,
+        thumbnailIdeas,
+        thumbnailAIPrompts,
+      },
+    };
+
     return videoData;
   }
 
@@ -713,31 +756,44 @@ export class DatabaseQueueService implements OnModuleInit {
     try {
       const transcript = await this.aiService.transcribeLocalFile(tmpPath);
 
-      await this.updateJobProgress(jobId, 70);
+      await this.updateJobProgress(jobId, 50);
 
       const summary = await this.aiService.summarizeTranscript(transcript);
-      const suggestions = await this.aiService.generateVideoSuggestionsFromText(
-        `${summary}\n\n---- FULL TRANSCRIPT ----\n${transcript}`,
-      );
+
+      await this.updateJobProgress(jobId, 60);
+
+      // Generate comprehensive analysis using new methods
+      const [titleRewrite, descriptionRewrite, keywordExtraction, chapters] =
+        await Promise.all([
+          this.aiService.generateTitleRewrite(
+            transcript,
+            'en',
+            'professional',
+            'Uploaded Video',
+          ),
+          this.aiService.generateDescriptionRewrite(transcript),
+          this.aiService.extractKeywords(transcript),
+          this.aiService.generateChapters(transcript),
+        ]);
 
       return {
         video: {
           id: key,
-          title: suggestions.titles?.[0] ?? 'Draft Video',
+          title: titleRewrite.titles?.[0] ?? 'Draft Video',
           description: summary,
-          tags: suggestions.tags,
+          tags: keywordExtraction.primaryKeywords,
           thumbnail: publicUrl,
           publishedAt: '',
-          duration: '',
+          duration: chapters.totalDuration || '',
           views: 0,
           likes: 0,
           comments: 0,
         },
-        suggestions: {
-          titles: suggestions.titles,
-          description: suggestions.description,
-          tags: suggestions.tags,
-          thumbnailPrompts: suggestions.thumbnailPrompts,
+        analysis: {
+          titleRewrite,
+          descriptionRewrite,
+          keywordExtraction,
+          chapters,
         },
       };
     } finally {
@@ -756,24 +812,39 @@ export class DatabaseQueueService implements OnModuleInit {
 
     await this.updateJobProgress(jobId, 70);
 
-    const suggestions = await this.aiService.generateVideoSuggestionsFromText(
-      `${summary}\n\n---- FULL TRANSCRIPT ----\n${transcript}`,
-    );
+    // Generate comprehensive analysis using new methods
+    const [titleRewrite, descriptionRewrite, keywordExtraction, chapters] =
+      await Promise.all([
+        this.aiService.generateTitleRewrite(
+          transcript,
+          'en',
+          'professional',
+          'Untitled Video',
+        ),
+        this.aiService.generateDescriptionRewrite(transcript),
+        this.aiService.extractKeywords(transcript),
+        this.aiService.generateChapters(transcript),
+      ]);
 
     return {
       video: {
         id: 'transcript-' + Date.now(),
-        title: suggestions.titles?.[0] ?? 'Draft Video',
+        title: titleRewrite.titles?.[0] ?? 'Draft Video',
         description: summary,
-        tags: suggestions.tags,
+        tags: keywordExtraction.primaryKeywords,
         thumbnail: '',
         publishedAt: '',
-        duration: '',
+        duration: chapters.totalDuration || '',
         views: 0,
         likes: 0,
         comments: 0,
       },
-      suggestions,
+      analysis: {
+        titleRewrite,
+        descriptionRewrite,
+        keywordExtraction,
+        chapters,
+      },
     };
   }
 

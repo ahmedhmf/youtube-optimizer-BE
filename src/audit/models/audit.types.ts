@@ -1,8 +1,22 @@
 // apps/api/src/modules/audit/audit.types.ts
 import { YouTubeVideo } from '../../youtube/youtube.types';
-import { AiSuggestions } from '../../ai/models/ai.types';
+import type {
+  TitleRewriteResult,
+  DescriptionRewriteResult,
+  KeywordExtractionResult,
+  ChaptersResult,
+  ThumbnailIdeaResult,
+} from '../../ai/models/ai.types';
 
+// New enhanced audit response
 export interface AuditResponse {
   video: YouTubeVideo;
-  suggestions: AiSuggestions;
+  analysis: {
+    titleRewrite: TitleRewriteResult;
+    descriptionRewrite: DescriptionRewriteResult;
+    keywordExtraction: KeywordExtractionResult;
+    chapters: ChaptersResult;
+    thumbnailIdeas?: ThumbnailIdeaResult[];
+    thumbnailAIPrompts?: string[];
+  };
 }

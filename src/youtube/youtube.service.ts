@@ -5,6 +5,7 @@ import { YouTubeVideo } from './youtube.types';
 import { HttpService } from '@nestjs/axios';
 import { SystemLogService } from '../logging/services/system-log.service';
 import { LogSeverity, SystemLogCategory } from '../logging/dto/log.types';
+import { Innertube } from 'youtubei.js';
 
 interface YouTubeApiResponse {
   items?: {
@@ -120,4 +121,179 @@ export class YoutubeService {
     if (!match) throw new Error('Invalid YouTube URL');
     return match[1];
   }
+
+  /**
+   * Fetch video transcript using YouTube's internal API (youtubei.js)
+   * More reliable than youtube-transcript package
+   * @param url - YouTube video URL
+   * @returns Transcript text as a single string
+   */
+  /* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return */
+  async getVideoTranscript(url: string): Promise<string> {
+    const videoId = this.extractVideoId(url);
+    const startTime = Date.now();
+
+    try {
+      // Initialize YouTube client
+      const youtube = await Innertube.create({
+        // Disable cache to avoid stale data
+        cache: undefined,
+      });
+
+      // Get basic video info and transcript
+      // Using try-catch to handle parsing errors gracefully
+      let transcriptData: any;
+      try {
+        const info = await youtube.getBasicInfo(videoId);
+        transcriptData = await info.getTranscript();
+      } catch {
+        // If getBasicInfo fails, try alternative method
+        this.logger.warn(
+          `getBasicInfo failed for ${videoId}, trying alternative method`,
+        );
+        const info = await youtube.getInfo(videoId);
+        transcriptData = await info.getTranscript();
+      }
+
+      if (!transcriptData) {
+        throw new Error('No transcript available for this video');
+      }
+
+      // Extract text from transcript segments
+      const segments: any[] =
+        transcriptData.transcript?.content?.body?.initial_segments || [];
+
+      const transcriptText: string = segments
+        .map((segment: any) => segment.snippet?.text || '')
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      if (!transcriptText) {
+        throw new Error('Transcript content is empty');
+      }
+
+      const responseTime = Date.now() - startTime;
+      await this.systemLogService.logSystem({
+        logLevel: LogSeverity.INFO,
+        category: SystemLogCategory.NETWORK,
+        serviceName: 'YoutubeService',
+        message: 'YouTube transcript fetched successfully (youtubei.js)',
+        details: {
+          videoId,
+          transcriptLength: transcriptText.length,
+          segmentCount: segments.length,
+          responseTimeMs: responseTime,
+        },
+      });
+
+      return transcriptText;
+    } catch (error) {
+      const responseTime = Date.now() - startTime;
+      await this.systemLogService.logSystem({
+        logLevel: LogSeverity.ERROR,
+        category: SystemLogCategory.NETWORK,
+        serviceName: 'YoutubeService',
+        message: 'Failed to fetch YouTube transcript (youtubei.js)',
+        details: {
+          videoId,
+          url,
+          responseTimeMs: responseTime,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        stackTrace: error instanceof Error ? error.stack : undefined,
+      });
+
+      throw new Error(
+        `Failed to fetch transcript: ${error instanceof Error ? error.message : 'Unknown error'}. Transcript may be disabled for this video.`,
+      );
+    }
+  }
+  /* eslint-enable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return */
+
+  /**
+   * Fetch video transcript with timestamps using youtubei.js
+   * @param url - YouTube video URL
+   * @returns Array of transcript segments with timestamps and text
+   */
+  /* eslint-disable @typescript-eslint/no-unsafe-member-access */
+  async getVideoTranscriptWithTimestamps(
+    url: string,
+  ): Promise<{ text: string; startMs: number; durationMs: number }[]> {
+    const videoId = this.extractVideoId(url);
+    const startTime = Date.now();
+
+    try {
+      const youtube = await Innertube.create({
+        cache: undefined,
+      });
+
+      // Try getBasicInfo first, fallback to getInfo if it fails
+      let transcriptData: any;
+      try {
+        const info = await youtube.getBasicInfo(videoId);
+        transcriptData = await info.getTranscript();
+      } catch {
+        this.logger.warn(`getBasicInfo failed for ${videoId}, trying getInfo`);
+        const info = await youtube.getInfo(videoId);
+        transcriptData = await info.getTranscript();
+      }
+
+      if (!transcriptData) {
+        throw new Error('No transcript available for this video');
+      }
+
+      // Extract segments with timestamps
+      const initialSegments: any[] =
+        transcriptData.transcript?.content?.body?.initial_segments || [];
+
+      const segments: { text: string; startMs: number; durationMs: number }[] =
+        initialSegments.map((segment: any) => ({
+          text: (segment.snippet?.text as string) || '',
+          startMs: (segment.start_ms as number) || 0,
+          durationMs: (segment.duration_ms as number) || 0,
+        }));
+
+      if (segments.length === 0) {
+        throw new Error('No transcript segments found');
+      }
+
+      const responseTime = Date.now() - startTime;
+      await this.systemLogService.logSystem({
+        logLevel: LogSeverity.INFO,
+        category: SystemLogCategory.NETWORK,
+        serviceName: 'YoutubeService',
+        message:
+          'YouTube transcript with timestamps fetched successfully (youtubei.js)',
+        details: {
+          videoId,
+          segmentCount: segments.length,
+          responseTimeMs: responseTime,
+        },
+      });
+
+      return segments;
+    } catch (error) {
+      const responseTime = Date.now() - startTime;
+      await this.systemLogService.logSystem({
+        logLevel: LogSeverity.ERROR,
+        category: SystemLogCategory.NETWORK,
+        serviceName: 'YoutubeService',
+        message:
+          'Failed to fetch YouTube transcript with timestamps (youtubei.js)',
+        details: {
+          videoId,
+          url,
+          responseTimeMs: responseTime,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        stackTrace: error instanceof Error ? error.stack : undefined,
+      });
+
+      throw new Error(
+        `Failed to fetch transcript: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+    }
+  }
+  /* eslint-enable @typescript-eslint/no-unsafe-member-access */
 }

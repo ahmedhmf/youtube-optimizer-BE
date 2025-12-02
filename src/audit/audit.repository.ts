@@ -18,19 +18,38 @@ export class AuditRepository {
     data: AuditResponse,
   ): Promise<DBAuditResultModel> {
     const client = this.supabase.getClient();
-    const { video, suggestions } = data;
+    const { video, analysis } = data;
 
+    // Save to new enhanced analysis columns (jsonb format)
     const result = await client
       .from('audits')
       .insert({
         user_id: userId,
         video_url: url,
         video_title: video.title,
-        ai_titles: suggestions.titles,
-        ai_description: suggestions.description,
-        ai_tags: suggestions.tags,
         thumbnail_url: video.thumbnail,
-        ai_image_prompt: suggestions.thumbnailPrompts,
+        // New enhanced analysis fields
+        ai_titles_with_reasoning: {
+          titles: analysis.titleRewrite.titles,
+          reasoning: analysis.titleRewrite.reasoning,
+        },
+        ai_description_detailed: {
+          description: analysis.descriptionRewrite.description,
+          hashtags: analysis.descriptionRewrite.hashtags,
+          keyPoints: analysis.descriptionRewrite.keyPoints,
+        },
+        ai_keywords_categorized: {
+          primaryKeywords: analysis.keywordExtraction.primaryKeywords,
+          longTailKeywords: analysis.keywordExtraction.longTailKeywords,
+          trendingKeywords: analysis.keywordExtraction.trendingKeywords,
+          competitorKeywords: analysis.keywordExtraction.competitorKeywords,
+        },
+        ai_chapters: {
+          chapters: analysis.chapters.chapters,
+          totalDuration: analysis.chapters.totalDuration,
+        },
+        ai_thumbnail_ideas: analysis.thumbnailIdeas || [],
+        ai_thumbnail_ai_prompts: analysis.thumbnailAIPrompts || [],
       })
       .select()
       .single<DBAuditResultModel>();

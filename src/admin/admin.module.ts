@@ -3,6 +3,7 @@ import { AdminController } from './admin.controller';
 import { CommonModule } from 'src/common/common.module';
 import { HttpModule } from '@nestjs/axios';
 import { SupabaseModule } from 'src/supabase/supabase.module';
+import { NotificationModule } from 'src/notifications/notification.module';
 import { AuthService } from 'src/auth/auth.service';
 import { CSRFGuard } from 'src/auth/guards/csrf.guard';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
@@ -13,7 +14,7 @@ import { JwtModule, JwtService } from '@nestjs/jwt';
 import { InvitationService } from 'src/auth/invitation.service';
 
 @Module({
-  imports: [SupabaseModule, HttpModule, CommonModule, JwtModule],
+  imports: [SupabaseModule, HttpModule, CommonModule, JwtModule, NotificationModule],
   controllers: [AdminController],
   providers: [
     AuthService,

@@ -19,6 +19,7 @@ import { OnboardingModule } from './onboarding/onboarding.module';
 import { HealthModule } from './health/health.module';
 import { UserFeedbackModule } from './user-feedback/user-feedback.module';
 import { MetricsModule } from './metrics/metrics.module';
+import { NotificationModule } from './notifications/notification.module';
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { MetricsModule } from './metrics/metrics.module';
     AdminModule,
     LoggingModule,
     UserFeedbackModule,
+    NotificationModule,
   ],
   controllers: [AppController],
   providers: [
