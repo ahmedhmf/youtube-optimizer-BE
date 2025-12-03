@@ -39,6 +39,8 @@ export class NotificationRepository {
           message: dto.message,
           type: dto.type,
           severity: dto.severity || 'info',
+          action_url: dto.actionUrl,
+          action_button_text: dto.actionButtonText,
           metadata: dto.metadata || {},
         })
         .select()
@@ -327,6 +329,8 @@ export class NotificationRepository {
       message: data.message,
       type: data.type as NotificationType,
       severity: data.severity,
+      actionUrl: data.action_url,
+      actionButtonText: data.action_button_text,
       read: data.read,
       createdAt: new Date(data.created_at),
       metadata: data.metadata || {},

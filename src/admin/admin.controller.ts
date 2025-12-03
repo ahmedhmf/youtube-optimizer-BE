@@ -503,10 +503,20 @@ export class AdminController {
           example: NotificationSeverity.INFO,
           description: 'Severity level for visual feedback (optional, defaults to info)',
         },
+        actionUrl: {
+          type: 'string',
+          description: 'URL to navigate to when action button is clicked (optional)',
+          example: '/dashboard/videos',
+        },
+        actionButtonText: {
+          type: 'string',
+          description: 'Text for the action button (optional)',
+          example: 'View Video',
+        },
         metadata: {
           type: 'object',
           description: 'Additional data (optional)',
-          example: { actionUrl: '/settings', priority: 'high' },
+          example: { videoId: '123', duration: 45000 },
         },
       },
     },
@@ -532,11 +542,13 @@ export class AdminController {
       message: string;
       type: NotificationType;
       severity?: NotificationSeverity;
+      actionUrl?: string;
+      actionButtonText?: string;
       metadata?: Record<string, any>;
     },
     @Req() req: AuthenticatedRequest,
   ) {
-    const { userId, title, message, type, severity, metadata } = body;
+    const { userId, title, message, type, severity, actionUrl, actionButtonText, metadata } = body;
 
     // Debug log
     console.log('Admin sending notification:', {
@@ -544,6 +556,8 @@ export class AdminController {
       title,
       type,
       severity,
+      actionUrl,
+      actionButtonText,
       hasMetadata: !!metadata,
     });
 
@@ -555,6 +569,8 @@ export class AdminController {
       type,
       metadata || {},
       severity,
+      actionUrl,
+      actionButtonText,
     );
 
     // If no userId provided, broadcast to all connected users

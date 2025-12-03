@@ -34,6 +34,8 @@ export interface Notification {
   message: string;
   type: NotificationType;
   severity?: NotificationSeverity;
+  actionUrl?: string;
+  actionButtonText?: string;
   read: boolean;
   createdAt: Date;
   metadata?: NotificationMetadata;
@@ -45,6 +47,8 @@ export interface CreateNotificationDto {
   message: string;
   type: NotificationType;
   severity?: NotificationSeverity;
+  actionUrl?: string;
+  actionButtonText?: string;
   metadata?: NotificationMetadata;
 }
 

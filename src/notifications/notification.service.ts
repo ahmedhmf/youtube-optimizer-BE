@@ -37,6 +37,8 @@ export class NotificationService {
     type: NotificationType,
     metadata?: NotificationMetadata,
     severity?: NotificationSeverity,
+    actionUrl?: string,
+    actionButtonText?: string,
   ): Promise<Notification | null> {
     this.logger.log(
       `Sending ${type} notification to user ${userId}: ${title}`,
@@ -49,6 +51,8 @@ export class NotificationService {
       type,
       metadata: metadata || {},
       severity: severity || NotificationSeverity.INFO,
+      actionUrl,
+      actionButtonText,
     });
 
     // Send via WebSocket if user is connected

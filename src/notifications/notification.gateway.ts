@@ -78,15 +78,33 @@ export class NotificationGateway
 
       // Send initial unread count
       const unreadCount = await this.notificationService.getUnreadCount(userId);
+      this.logger.log(`Unread count for user ${userId}: ${unreadCount}`);
       client.emit('unread-count', { count: unreadCount });
 
-      // Send recent unread notifications
-      const { notifications } =
-        await this.notificationService.getUserNotifications(userId, {
+      // Send all unread notifications
+      const result = await this.notificationService.getUserNotifications(
+        userId,
+        {
           read: false,
-          limit: 10,
-        });
-      client.emit('initial-notifications', { notifications });
+          limit: 100, // Increased limit to get all unread notifications
+        },
+      );
+
+      this.logger.log(
+        `Fetched ${result.notifications.length} unread notifications for user ${userId}`,
+      );
+      this.logger.debug(
+        `Notifications data: ${JSON.stringify(result.notifications.slice(0, 2))}`,
+      );
+
+      client.emit('initial-notifications', {
+        notifications: result.notifications,
+        count: result.notifications.length,
+      });
+
+      this.logger.log(
+        `Emitted initial-notifications event with ${result.notifications.length} notifications to user ${userId}`,
+      );
     } catch (error) {
       this.logger.error('Connection error:', error);
       client.disconnect();
@@ -198,7 +216,9 @@ export class NotificationGateway
     const userSocketIds = this.userSockets.get(userId);
 
     if (!userSocketIds || userSocketIds.size === 0) {
-      this.logger.debug(`User ${userId} not connected, skipping WebSocket send`);
+      this.logger.debug(
+        `User ${userId} not connected, skipping WebSocket send`,
+      );
       return;
     }
 
@@ -236,15 +256,15 @@ export class NotificationGateway
       const decoded = await this.jwtService.verifyAsync(token, {
         secret: process.env.JWT_SECRET,
       });
-      
+
       // Extract user ID from token payload
       const userId = decoded?.sub || decoded?.userId || decoded?.id;
-      
+
       if (!userId) {
         this.logger.warn('Token valid but no user ID found in payload');
         return null;
       }
-      
+
       return userId;
     } catch (error) {
       this.logger.error('Token verification failed:', error.message);
