@@ -34,7 +34,10 @@ import { UserLogService } from '../logging/services/user-log.service';
 import { LogAggregatorService } from '../logging/services/log-aggregator.service';
 import { LogSeverity, LogType } from '../logging/dto/log.types';
 import { NotificationService } from '../notifications/notification.service';
-import { NotificationType, NotificationSeverity } from '../notifications/models/notification.types';
+import {
+  NotificationType,
+  NotificationSeverity,
+} from '../notifications/models/notification.types';
 import { Request } from 'express';
 
 interface AuthenticatedRequest extends Request {
@@ -501,17 +504,24 @@ export class AdminController {
           type: 'string',
           enum: Object.values(NotificationSeverity),
           example: NotificationSeverity.INFO,
-          description: 'Severity level for visual feedback (optional, defaults to info)',
+          description:
+            'Severity level for visual feedback (optional, defaults to info)',
         },
         actionUrl: {
           type: 'string',
-          description: 'URL to navigate to when action button is clicked (optional)',
+          description:
+            'URL to navigate to when action button is clicked (optional)',
           example: '/dashboard/videos',
         },
         actionButtonText: {
           type: 'string',
           description: 'Text for the action button (optional)',
           example: 'View Video',
+        },
+        callback: {
+          type: 'string',
+          description: 'Callback identifier for frontend action handler (optional)',
+          example: 'refreshVideoList',
         },
         metadata: {
           type: 'object',
@@ -544,11 +554,21 @@ export class AdminController {
       severity?: NotificationSeverity;
       actionUrl?: string;
       actionButtonText?: string;
+      callback?: string;
       metadata?: Record<string, any>;
     },
     @Req() req: AuthenticatedRequest,
   ) {
-    const { userId, title, message, type, severity, actionUrl, actionButtonText, metadata } = body;
+    const {
+      userId,
+      title,
+      message,
+      type,
+      severity,
+      actionUrl,
+      actionButtonText,
+      metadata,
+    } = body;
 
     // Debug log
     console.log('Admin sending notification:', {

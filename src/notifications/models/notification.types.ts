@@ -36,6 +36,7 @@ export interface Notification {
   severity?: NotificationSeverity;
   actionUrl?: string;
   actionButtonText?: string;
+  callback?: string;
   read: boolean;
   createdAt: Date;
   metadata?: NotificationMetadata;
@@ -49,6 +50,7 @@ export interface CreateNotificationDto {
   severity?: NotificationSeverity;
   actionUrl?: string;
   actionButtonText?: string;
+  callback?: string;
   metadata?: NotificationMetadata;
 }
 

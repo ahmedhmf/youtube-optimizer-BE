@@ -41,6 +41,7 @@ export class NotificationRepository {
           severity: dto.severity || 'info',
           action_url: dto.actionUrl,
           action_button_text: dto.actionButtonText,
+          callback: dto.callback,
           metadata: dto.metadata || {},
         })
         .select()
@@ -331,6 +332,7 @@ export class NotificationRepository {
       severity: data.severity,
       actionUrl: data.action_url,
       actionButtonText: data.action_button_text,
+      callback: data.callback,
       read: data.read,
       createdAt: new Date(data.created_at),
       metadata: data.metadata || {},
