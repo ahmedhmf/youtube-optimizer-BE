@@ -10,8 +10,6 @@ import { JwtStrategy } from './jwt.strategy';
 import { RolesGuard } from './guards/roles.guard';
 import { SocialAuthService } from './social-auth.service';
 import { SupabaseModule } from '../supabase/supabase.module';
-import { CSRFService } from '../common/csrf.service';
-import { CSRFController } from './csrf.controller';
 import { CommonModule } from '../common/common.module';
 import { AdminService } from '../admin/admin.service';
 import { InvitationService } from './invitation.service';
@@ -41,13 +39,12 @@ import { NotificationModule } from '../notifications/notification.module';
       inject: [ConfigService],
     }),
   ],
-  controllers: [AuthController, CSRFController, InvitationController],
+  controllers: [AuthController, InvitationController],
   providers: [
     AuthService,
     JwtStrategy,
     RolesGuard,
     SocialAuthService,
-    CSRFService,
     AdminService,
     InvitationService,
   ],

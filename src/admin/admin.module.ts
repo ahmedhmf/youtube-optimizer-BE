@@ -7,7 +7,6 @@ import { NotificationModule } from 'src/notifications/notification.module';
 import { AuthService } from 'src/auth/auth.service';
 import { RolesGuard } from 'src/auth/guards/roles.guard';
 import { SocialAuthService } from 'src/auth/social-auth.service';
-import { CSRFService } from 'src/common/csrf.service';
 import { AdminService } from './admin.service';
 import { JwtModule, JwtService } from '@nestjs/jwt';
 import { InvitationService } from 'src/auth/invitation.service';
@@ -28,7 +27,6 @@ import { UserPreferencesModule } from 'src/user-preferences/user-preferences.mod
     JwtService,
     RolesGuard,
     SocialAuthService,
-    CSRFService,
     AdminService,
     InvitationService,
   ],
