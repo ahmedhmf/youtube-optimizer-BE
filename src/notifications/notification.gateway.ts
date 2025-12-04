@@ -241,7 +241,7 @@ export class NotificationGateway
   /**
    * Broadcast to all connected users (for system-wide announcements)
    */
-  async broadcastToAll(notification: any): Promise<void> {
+  broadcastToAll(notification: any): void {
     this.server.emit('system-notification', notification);
     this.logger.log(`Broadcasted notification to all users`);
   }

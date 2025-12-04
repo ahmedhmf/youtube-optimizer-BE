@@ -16,7 +16,7 @@ export class AuditRepository {
     userId: string,
     url: string,
     data: AuditResponse,
-  ): Promise<DBAuditResultModel> {
+  ): Promise<DBAuditResultModel['data']> {
     const client = this.supabase.getClient();
     const { video, analysis } = data;
 
@@ -52,10 +52,11 @@ export class AuditRepository {
         ai_thumbnail_ai_prompts: analysis.thumbnailAIPrompts || [],
       })
       .select()
-      .single<DBAuditResultModel>();
+      .single();
 
     const { data: savedAudit, error } = result;
     if (error) throw new Error(error.message);
+    if (!savedAudit) throw new Error('Failed to save audit');
     return savedAudit;
   }
 

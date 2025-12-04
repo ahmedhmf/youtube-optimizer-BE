@@ -13,13 +13,20 @@ import * as fs from 'node:fs';
 import { PromptsService } from './prompts.service';
 import { SystemLogService } from '../logging/services/system-log.service';
 import { LogSeverity, SystemLogCategory } from '../logging/dto/log.types';
+import { UserPreferencesService } from '../user-preferences/user-preferences.service';
+import { NotificationService } from '../notifications/notification.service';
+import { NotificationType, NotificationSeverity } from '../notifications/models/notification.types';
 
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name);
   private readonly openai: OpenAI;
 
-  constructor(private readonly systemLogService: SystemLogService) {
+  constructor(
+    private readonly systemLogService: SystemLogService,
+    private readonly userPreferencesService: UserPreferencesService,
+    private readonly notificationService: NotificationService,
+  ) {
     this.openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   }
 
@@ -136,18 +143,42 @@ export class AiService {
    * 1. Title Rewrite - Generate optimized title options
    */
   async generateTitleRewrite(
+    userId: string,
     transcript: string,
-    language: string,
-    tone: string,
     originalTitle: string,
+    languageOverride?: string,
+    toneOverride?: string,
   ): Promise<TitleRewriteResult> {
     const startTime = Date.now();
     try {
+      // Fetch user preferences
+      const preferences = await this.userPreferencesService.getPreferences(userId);
+      
+      // Apply fallback chain: override params → saved preferences → defaults
+      const language = languageOverride ?? preferences?.language ?? 'en';
+      const tone = toneOverride ?? preferences?.tone ?? 'professional';
+      const customInstructions = preferences?.customInstructions;
+      
+      // Send notification if using defaults due to missing preferences
+      if (!preferences?.isCompleted && !languageOverride && !toneOverride) {
+        await this.notificationService.sendNotification(
+          userId,
+          'Setup Content Preferences',
+          'Using default settings for title generation. Setup your preferences for personalized content.',
+          NotificationType.SYSTEM,
+          {},
+          NotificationSeverity.INFO,
+          '/settings/content-preferences',
+          'Setup Now',
+        );
+      }
+
       const prompt = PromptsService.getTitleRewritePrompt(
         transcript,
         language,
         tone,
         originalTitle,
+        customInstructions,
       );
 
       const res = await this.openai.chat.completions.create({
@@ -206,11 +237,40 @@ export class AiService {
    * 2. Description Rewrite - Generate SEO-optimized description
    */
   async generateDescriptionRewrite(
+    userId: string,
     transcript: string,
+    languageOverride?: string,
   ): Promise<DescriptionRewriteResult> {
     const startTime = Date.now();
     try {
-      const prompt = PromptsService.getDescriptionRewritePrompt(transcript);
+      // Fetch user preferences
+      const preferences = await this.userPreferencesService.getPreferences(userId);
+      
+      // Apply fallback chain: override param → saved preference → default
+      const language = languageOverride ?? preferences?.language ?? 'en';
+      const tone = preferences?.tone;
+      const customInstructions = preferences?.customInstructions;
+      
+      // Send notification if using defaults due to missing preferences
+      if (!preferences?.isCompleted && !languageOverride) {
+        await this.notificationService.sendNotification(
+          userId,
+          'Setup Content Preferences',
+          'Using default language for description. Setup your preferences for personalized content.',
+          NotificationType.SYSTEM,
+          {},
+          NotificationSeverity.INFO,
+          '/settings/content-preferences',
+          'Setup Now',
+        );
+      }
+
+      const prompt = PromptsService.getDescriptionRewritePrompt(
+        transcript,
+        language,
+        tone,
+        customInstructions,
+      );
 
       const res = await this.openai.chat.completions.create({
         model: 'gpt-4o-mini',
@@ -385,11 +445,38 @@ export class AiService {
    * 5. Thumbnail Ideas - Generate thumbnail concepts
    */
   async generateThumbnailIdeas(
+    userId: string,
     transcript: string,
+    thumbnailStyleOverride?: string,
   ): Promise<ThumbnailIdeaResult[]> {
     const startTime = Date.now();
     try {
-      const prompt = PromptsService.getThumbnailIdeaPrompt(transcript);
+      // Fetch user preferences
+      const preferences = await this.userPreferencesService.getPreferences(userId);
+      
+      // Apply fallback chain: override param → saved preference → undefined (no default)
+      const thumbnailStyle = thumbnailStyleOverride ?? preferences?.thumbnailStyle;
+      const customInstructions = preferences?.customInstructions;
+      
+      // Send notification if using no style due to missing preferences
+      if (!preferences?.isCompleted && !thumbnailStyleOverride) {
+        await this.notificationService.sendNotification(
+          userId,
+          'Setup Content Preferences',
+          'Setup your thumbnail style preference for personalized thumbnail ideas.',
+          NotificationType.SYSTEM,
+          {},
+          NotificationSeverity.INFO,
+          '/settings/content-preferences',
+          'Setup Now',
+        );
+      }
+
+      const prompt = PromptsService.getThumbnailIdeaPrompt(
+        transcript,
+        thumbnailStyle,
+        customInstructions,
+      );
 
       const res = await this.openai.chat.completions.create({
         model: 'gpt-4o-mini',
@@ -441,10 +528,39 @@ export class AiService {
   /**
    * 6. Thumbnail AI Prompts - Generate AI image generation prompts
    */
-  async generateThumbnailAIPrompts(transcript: string): Promise<string[]> {
+  async generateThumbnailAIPrompts(
+    userId: string,
+    transcript: string,
+    imageStyleOverride?: string,
+  ): Promise<string[]> {
     const startTime = Date.now();
     try {
-      const prompt = PromptsService.getThumbnailAIPrompt(transcript);
+      // Fetch user preferences
+      const preferences = await this.userPreferencesService.getPreferences(userId);
+      
+      // Apply fallback chain: override param → saved preference → undefined (no default)
+      const imageStyle = imageStyleOverride ?? preferences?.imageStyle;
+      const customInstructions = preferences?.customInstructions;
+      
+      // Send notification if using no style due to missing preferences
+      if (!preferences?.isCompleted && !imageStyleOverride) {
+        await this.notificationService.sendNotification(
+          userId,
+          'Setup Content Preferences',
+          'Setup your image style preference for personalized AI thumbnail prompts.',
+          NotificationType.SYSTEM,
+          {},
+          NotificationSeverity.INFO,
+          '/settings/content-preferences',
+          'Setup Now',
+        );
+      }
+
+      const prompt = PromptsService.getThumbnailAIPrompt(
+        transcript,
+        imageStyle,
+        customInstructions,
+      );
 
       const res = await this.openai.chat.completions.create({
         model: 'gpt-4o-mini',
@@ -497,7 +613,13 @@ export class AiService {
    * 7. Complete Video Analysis - Run all analyses and return combined results
    * This is the main method that combines all 7 analyses
    */
-  async analyzeVideoComplete(transcript: string): Promise<VideoAnalysisResult> {
+  async analyzeVideoComplete(
+    userId: string,
+    transcript: string,
+    languageOverride?: string,
+    thumbnailStyleOverride?: string,
+    imageStyleOverride?: string,
+  ): Promise<VideoAnalysisResult> {
     const startTime = Date.now();
     this.logger.log('Starting complete video analysis...');
 
@@ -510,11 +632,11 @@ export class AiService {
         thumbnailIdeas,
         thumbnailAIPrompts,
       ] = await Promise.all([
-        this.generateDescriptionRewrite(transcript),
+        this.generateDescriptionRewrite(userId, transcript, languageOverride),
         this.extractKeywords(transcript),
         this.generateChapters(transcript),
-        this.generateThumbnailIdeas(transcript),
-        this.generateThumbnailAIPrompts(transcript),
+        this.generateThumbnailIdeas(userId, transcript, thumbnailStyleOverride),
+        this.generateThumbnailAIPrompts(userId, transcript, imageStyleOverride),
       ]);
 
       const responseTime = Date.now() - startTime;

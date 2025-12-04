@@ -29,6 +29,12 @@ import {
   SubscriptionStatus,
 } from '../DTO/subscription.dto';
 import { InvitationService } from './invitation.service';
+import { UserPreferencesService } from '../user-preferences/user-preferences.service';
+import { NotificationService } from '../notifications/notification.service';
+import {
+  NotificationType,
+  NotificationSeverity,
+} from '../notifications/models/notification.types';
 
 @Injectable()
 export class AuthService {
@@ -40,6 +46,8 @@ export class AuthService {
     private readonly socialAuthService: SocialAuthService,
     private readonly logAggregatorService: LogAggregatorService,
     private readonly invitationService: InvitationService,
+    private readonly userPreferencesService: UserPreferencesService,
+    private readonly notificationService: NotificationService,
   ) {}
 
   async register(registerDto: RegisterDto): Promise<AuthResponse> {
@@ -205,6 +213,31 @@ export class AuthService {
         updated_at: new Date().toISOString(),
       })
       .eq('id', user.id);
+
+    // Check if user has completed content preferences
+    try {
+      const hasCompletedPreferences =
+        await this.userPreferencesService.hasCompletedPreferences(user.id);
+
+      if (!hasCompletedPreferences) {
+        // Send notification to complete preferences
+        await this.notificationService.sendNotification(
+          user.id,
+          'Complete Your Content Preferences',
+          'Set up your content style preferences to get personalized AI-generated content that matches your brand.',
+          NotificationType.SYSTEM,
+          {
+            actionUrl: '/settings/content-preferences',
+          },
+          NotificationSeverity.INFO,
+          '/settings/content-preferences',
+          'Complete Setup',
+        );
+      }
+    } catch (error) {
+      // Don't fail login if notification fails
+      this.logger.error('Failed to check preferences on login:', error);
+    }
 
     // Return Supabase tokens
     return {

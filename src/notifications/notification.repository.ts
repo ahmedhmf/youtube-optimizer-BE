@@ -22,7 +22,8 @@ export class NotificationRepository {
     dto: CreateNotificationDto,
   ): Promise<Notification | null> {
     try {
-      const client = this.supabase.getClient();
+      // Use service client to bypass RLS for system-generated notifications
+      const client = this.supabase.getServiceClient();
 
       // Debug log to verify DTO structure
       this.logger.debug(`Creating notification with DTO: ${JSON.stringify({

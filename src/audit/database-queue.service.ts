@@ -20,6 +20,9 @@ import {
   SystemLogCategory,
 } from '../logging/dto/log.types';
 import { SystemLogService } from '../logging/services/system-log.service';
+import { QueueGateway } from './queue.gateway';
+import { QueueEventType, QueueUpdatePayload, NotificationType, NotificationSeverity } from '../notifications/models/notification.types';
+import { NotificationService } from '../notifications/notification.service';
 
 @Injectable()
 export class DatabaseQueueService implements OnModuleInit {
@@ -37,6 +40,8 @@ export class DatabaseQueueService implements OnModuleInit {
     private readonly storage: SupabaseStorageService,
     private readonly videoAnalysisLogService: VideoAnalysisLogService,
     private readonly systemLogService: SystemLogService,
+    private readonly queueGateway: QueueGateway,
+    private readonly notificationService: NotificationService,
   ) {}
 
   onModuleInit() {
@@ -138,6 +143,19 @@ export class DatabaseQueueService implements OnModuleInit {
       `Job ${data.id} queued for user ${jobData.userId}. Queue position: ${queuePosition}, estimated wait: ${estimatedWaitTime} minutes`,
     );
 
+    // Send real-time queue update
+    this.sendQueueUpdate(jobData.userId, data.id.toString(), QueueEventType.JOB_QUEUED, {
+      progress: 0,
+      stage: 'queued',
+      message: `Job queued at position ${queuePosition}. Estimated wait: ${estimatedWaitTime} minutes`,
+      metadata: {
+        jobType: jobData.type,
+        queuePosition,
+        estimatedWaitTime,
+        videoTitle,
+      },
+    });
+
     // Trigger immediate processing check
     setTimeout(() => {
       this.processJobs().catch((error) => {
@@ -146,6 +164,44 @@ export class DatabaseQueueService implements OnModuleInit {
     }, 100);
 
     return data.id.toString();
+  }
+
+  /**
+   * Send real-time queue update to user via WebSocket
+   */
+  private sendQueueUpdate(
+    userId: string,
+    jobId: string,
+    eventType: QueueEventType,
+    options?: {
+      progress?: number;
+      stage?: string;
+      message?: string;
+      error?: string;
+      result?: any;
+      metadata?: Record<string, any>;
+    },
+  ): void {
+    try {
+      const queueUpdate: QueueUpdatePayload = {
+        jobId,
+        eventType,
+        progress: options?.progress,
+        stage: options?.stage,
+        message: options?.message,
+        error: options?.error,
+        result: options?.result,
+        metadata: options?.metadata,
+      };
+
+      this.queueGateway.sendQueueUpdateToUser(userId, queueUpdate);
+    } catch (error) {
+      this.logger.error(
+        `Failed to send queue update for job ${jobId}:`,
+        error,
+      );
+      // Don't throw - queue updates are non-critical
+    }
   }
 
   async getJobStatus(jobId: string) {
@@ -217,6 +273,32 @@ export class DatabaseQueueService implements OnModuleInit {
       this.logger.log(`Job ${jobId} successfully cancelled`);
       // Remove from activeJobs if it was being processed
       this.activeJobs.delete(jobIdStr);
+
+      // Send real-time update: Job cancelled
+      if (data && data.length > 0 && data[0].user_id) {
+        this.sendQueueUpdate(
+          data[0].user_id,
+          jobId,
+          QueueEventType.JOB_CANCELLED,
+          {
+            stage: 'cancelled',
+            message: 'Job cancelled by user',
+            metadata: {
+              jobType: data[0].job_type,
+            },
+          },
+        );
+
+        // Send persistent notification
+        await this.notificationService.sendNotification(
+          data[0].user_id,
+          'Analysis Cancelled',
+          `Your ${data[0].job_type === 'youtube' ? 'YouTube video' : data[0].job_type === 'upload' ? 'uploaded video' : 'transcript'} analysis has been cancelled.`,
+          NotificationType.PROCESSING,
+          { jobId, jobType: data[0].job_type },
+          NotificationSeverity.WARNING,
+        );
+      }
     } else {
       this.logger.warn(
         `Job ${jobId} could not be cancelled - it may have already completed or doesn't exist`,
@@ -476,6 +558,7 @@ export class DatabaseQueueService implements OnModuleInit {
   private async processJob(job: DBJobResultModel) {
     const client = this.supabase.getClient();
     const jobId = job.id.toString();
+    const userId = job.user_id || '';
 
     try {
       // Mark as processing
@@ -489,6 +572,28 @@ export class DatabaseQueueService implements OnModuleInit {
         .eq('id', jobId);
 
       this.logger.log(`Processing job ${jobId} of type ${job.job_type}`);
+
+      // Send real-time update: Job started (only if userId is valid)
+      if (userId) {
+        this.sendQueueUpdate(userId, jobId, QueueEventType.JOB_STARTED, {
+          progress: 10,
+          stage: 'processing',
+          message: 'Job processing started',
+          metadata: {
+            jobType: job.job_type,
+          },
+        });
+
+        // Send persistent notification
+        await this.notificationService.sendNotification(
+          userId,
+          'Analysis Started',
+          `Your ${job.job_type === 'youtube' ? 'YouTube video' : job.job_type === 'upload' ? 'uploaded video' : 'transcript'} analysis has started processing.`,
+          NotificationType.PROCESSING,
+          { jobId, jobType: job.job_type },
+          NotificationSeverity.INFO,
+        );
+      }
 
       // Update video analysis log to PROCESSING
       try {
@@ -537,6 +642,7 @@ export class DatabaseQueueService implements OnModuleInit {
           result = await this.processYouTubeVideo(
             jobId.toString(),
             payload.configuration,
+            payload.userId,
           );
           break;
         }
@@ -563,6 +669,7 @@ export class DatabaseQueueService implements OnModuleInit {
           result = await this.processTranscript(
             jobId.toString(),
             payload.transcript,
+            payload.userId,
           );
           break;
         }
@@ -570,7 +677,7 @@ export class DatabaseQueueService implements OnModuleInit {
           throw new Error(`Unknown job type: ${job.job_type}`);
       }
 
-      await this.updateJobProgress(jobId.toString(), 90);
+      await this.updateJobProgress(jobId.toString(), 90, 'Saving results', userId);
 
       // Save the audit
       const url =
@@ -605,13 +712,43 @@ export class DatabaseQueueService implements OnModuleInit {
 
       this.logger.log(`Job ${jobId} completed successfully`);
 
+      // Send real-time update: Job completed (only if userId is valid)
+      if (userId) {
+        this.sendQueueUpdate(userId, jobId, QueueEventType.JOB_COMPLETED, {
+          progress: 100,
+          stage: 'completed',
+          message: 'Job completed successfully',
+          result: savedAudit,
+          metadata: {
+            auditId: savedAudit.id,
+            jobType: job.job_type,
+          },
+        });
+
+        // Send persistent notification with action button
+        await this.notificationService.sendNotification(
+          userId,
+          'Analysis Complete! 🎉',
+          `Your video analysis is ready. Click to view the results.`,
+          NotificationType.PROCESSING,
+          { 
+            jobId, 
+            auditId: savedAudit.id,
+            jobType: job.job_type,
+          },
+          NotificationSeverity.SUCCESS,
+          `/analysis/${savedAudit.id}`,
+          'View Results',
+        );
+      }
+
       // Update video analysis log to COMPLETED
       try {
         await this.videoAnalysisLogService.updateLogByVideoId(jobId, {
           status: VideoAnalysisStatus.COMPLETED,
           stage: 'completed',
           progressPercentage: 100,
-          auditId: savedAudit.data.id,
+          auditId: savedAudit.id,
           results: result as unknown as Record<string, unknown>,
         });
       } catch (logError) {
@@ -620,22 +757,52 @@ export class DatabaseQueueService implements OnModuleInit {
     } catch (error) {
       this.logger.error(`Job ${jobId} failed:`, error);
 
+      const errorMessage = error instanceof Error ? error.message : String(error);
+
       // Mark as failed
       await client
         .from('job_queue')
         .update({
           status: 'failed',
-          error_message: error instanceof Error ? error.message : String(error),
+          error_message: errorMessage,
           completed_at: new Date().toISOString(),
         })
         .eq('id', jobId);
+
+      // Send real-time update: Job failed (only if userId is valid)
+      if (userId) {
+        this.sendQueueUpdate(userId, jobId, QueueEventType.JOB_FAILED, {
+          progress: job.progress || 0,
+          stage: 'failed',
+          message: 'Job processing failed',
+          error: errorMessage,
+          metadata: {
+            jobType: job.job_type,
+            errorCode: error instanceof Error ? error.name : 'UNKNOWN_ERROR',
+          },
+        });
+
+        // Send persistent notification
+        await this.notificationService.sendNotification(
+          userId,
+          'Analysis Failed',
+          `Your video analysis failed: ${errorMessage}`,
+          NotificationType.PROCESSING,
+          { 
+            jobId, 
+            jobType: job.job_type,
+            error: errorMessage,
+          },
+          NotificationSeverity.ERROR,
+        );
+      }
 
       // Update video analysis log to FAILED
       try {
         await this.videoAnalysisLogService.updateLogByVideoId(jobId, {
           status: VideoAnalysisStatus.FAILED,
           stage: 'failed',
-          errorMessage: error instanceof Error ? error.message : String(error),
+          errorMessage,
           errorCode: error instanceof Error ? error.name : 'UNKNOWN_ERROR',
         });
       } catch (logError) {
@@ -644,16 +811,26 @@ export class DatabaseQueueService implements OnModuleInit {
     }
   }
 
-  private async updateJobProgress(jobId: string, progress: number) {
+  private async updateJobProgress(jobId: string, progress: number, stage?: string, userId?: string) {
     const client = this.supabase.getClient();
     await client.from('job_queue').update({ progress }).eq('id', jobId);
+
+    // Send real-time progress update if userId is provided
+    if (userId) {
+      this.sendQueueUpdate(userId, jobId, QueueEventType.JOB_PROGRESS, {
+        progress,
+        stage: stage || `Processing (${progress}%)`,
+        message: `Job ${progress}% complete`,
+      });
+    }
   }
 
   private async processYouTubeVideo(
     jobId: string,
     configuration: AiMessageConfiguration,
+    userId: string,
   ): Promise<AuditResponse> {
-    await this.updateJobProgress(jobId, 20);
+    await this.updateJobProgress(jobId, 20, 'Fetching video data', userId);
 
     // Get video metadata and transcript
     const video = await this.youtubeService.getVideoData(configuration.url);
@@ -661,7 +838,7 @@ export class DatabaseQueueService implements OnModuleInit {
       configuration.url,
     );
 
-    await this.updateJobProgress(jobId, 40);
+    await this.updateJobProgress(jobId, 40, 'Generating AI analysis', userId);
 
     // Generate comprehensive analysis using new methods
     const language = configuration.language || 'en';
@@ -670,17 +847,18 @@ export class DatabaseQueueService implements OnModuleInit {
     const [titleRewrite, descriptionRewrite, keywordExtraction, chapters] =
       await Promise.all([
         this.aiService.generateTitleRewrite(
+          userId,
           transcript,
+          video.title,
           language,
           tone,
-          video.title,
         ),
-        this.aiService.generateDescriptionRewrite(transcript),
+        this.aiService.generateDescriptionRewrite(userId, transcript, language),
         this.aiService.extractKeywords(transcript),
         this.aiService.generateChapters(transcript),
       ]);
 
-    await this.updateJobProgress(jobId, 80);
+    await this.updateJobProgress(jobId, 80, 'Generating thumbnails', userId);
 
     // Optionally generate thumbnail ideas (can be skipped for faster processing)
     let thumbnailIdeas: any[] = [];
@@ -688,8 +866,8 @@ export class DatabaseQueueService implements OnModuleInit {
     
     try {
       [thumbnailIdeas, thumbnailAIPrompts] = await Promise.all([
-        this.aiService.generateThumbnailIdeas(transcript),
-        this.aiService.generateThumbnailAIPrompts(transcript),
+        this.aiService.generateThumbnailIdeas(userId, transcript),
+        this.aiService.generateThumbnailAIPrompts(userId, transcript),
       ]);
     } catch (error) {
       this.logger.warn(
@@ -720,7 +898,7 @@ export class DatabaseQueueService implements OnModuleInit {
   ): Promise<AuditResponse> {
     const { buffer, originalName, mimetype } = fileData;
 
-    await this.updateJobProgress(jobId, 30);
+    await this.updateJobProgress(jobId, 30, 'Preparing upload');
 
     // Get user ID from job
     const client = this.supabase.getClient();
@@ -747,7 +925,7 @@ export class DatabaseQueueService implements OnModuleInit {
       accessToken,
     );
 
-    await this.updateJobProgress(jobId, 50);
+    await this.updateJobProgress(jobId, 50, 'Transcribing audio', userId);
 
     // Create temporary file for transcription
     const tmpPath = path.join(os.tmpdir(), `${Date.now()}-${originalName}`);
@@ -756,22 +934,23 @@ export class DatabaseQueueService implements OnModuleInit {
     try {
       const transcript = await this.aiService.transcribeLocalFile(tmpPath);
 
-      await this.updateJobProgress(jobId, 50);
+      await this.updateJobProgress(jobId, 50, 'Analyzing transcript', userId);
 
       const summary = await this.aiService.summarizeTranscript(transcript);
 
-      await this.updateJobProgress(jobId, 60);
+      await this.updateJobProgress(jobId, 60, 'Generating AI content', userId);
 
       // Generate comprehensive analysis using new methods
       const [titleRewrite, descriptionRewrite, keywordExtraction, chapters] =
         await Promise.all([
           this.aiService.generateTitleRewrite(
+            userId,
             transcript,
+            'Uploaded Video',
             'en',
             'professional',
-            'Uploaded Video',
           ),
-          this.aiService.generateDescriptionRewrite(transcript),
+          this.aiService.generateDescriptionRewrite(userId, transcript, 'en'),
           this.aiService.extractKeywords(transcript),
           this.aiService.generateChapters(transcript),
         ]);
@@ -805,23 +984,25 @@ export class DatabaseQueueService implements OnModuleInit {
   private async processTranscript(
     jobId: string,
     transcript: string,
+    userId: string,
   ): Promise<AuditResponse> {
-    await this.updateJobProgress(jobId, 40);
+    await this.updateJobProgress(jobId, 40, 'Summarizing transcript', userId);
 
     const summary = await this.aiService.summarizeTranscript(transcript);
 
-    await this.updateJobProgress(jobId, 70);
+    await this.updateJobProgress(jobId, 70, 'Generating AI analysis', userId);
 
     // Generate comprehensive analysis using new methods
     const [titleRewrite, descriptionRewrite, keywordExtraction, chapters] =
       await Promise.all([
         this.aiService.generateTitleRewrite(
+          userId,
           transcript,
+          'Untitled Video',
           'en',
           'professional',
-          'Untitled Video',
         ),
-        this.aiService.generateDescriptionRewrite(transcript),
+        this.aiService.generateDescriptionRewrite(userId, transcript, 'en'),
         this.aiService.extractKeywords(transcript),
         this.aiService.generateChapters(transcript),
       ]);

@@ -17,6 +17,8 @@ import { CommonModule } from '../common/common.module';
 import { AdminService } from '../admin/admin.service';
 import { InvitationService } from './invitation.service';
 import { InvitationController } from './invitation.controller';
+import { UserPreferencesModule } from '../user-preferences/user-preferences.module';
+import { NotificationModule } from '../notifications/notification.module';
 
 @Module({
   imports: [
@@ -24,6 +26,8 @@ import { InvitationController } from './invitation.controller';
     HttpModule,
     CommonModule,
     ScheduleModule.forRoot(),
+    UserPreferencesModule,
+    NotificationModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],

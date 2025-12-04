@@ -6,6 +6,8 @@ import { PromptsService } from './prompts.service';
 import { YouTubeVideo } from '../auth/types/youtube-video.model';
 import { AiSuggestions } from './models/ai.types';
 import { SystemLogService } from '../logging/services/system-log.service';
+import { UserPreferencesService } from '../user-preferences/user-preferences.service';
+import { NotificationService } from '../notifications/notification.service';
 import OpenAI from 'openai';
 import * as fs from 'node:fs';
 
@@ -109,6 +111,25 @@ describe('AiService', () => {
         {
           provide: SystemLogService,
           useValue: mockSystemLogService,
+        },
+        {
+          provide: UserPreferencesService,
+          useValue: {
+            getPreferences: jest.fn().mockResolvedValue({
+              tone: 'professional',
+              language: 'en',
+              thumbnailStyle: 'modern',
+              imageStyle: 'realistic',
+              isCompleted: true,
+            }),
+            hasCompletedPreferences: jest.fn().mockResolvedValue(true),
+          },
+        },
+        {
+          provide: NotificationService,
+          useValue: {
+            sendNotification: jest.fn().mockResolvedValue(undefined),
+          },
         },
       ],
     }).compile();

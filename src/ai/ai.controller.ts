@@ -7,9 +7,16 @@ import {
   HttpException,
   HttpStatus,
   UseGuards,
+  Req,
+  Query,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ApiTags, ApiOperation, ApiResponse, ApiConsumes } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiConsumes,
+} from '@nestjs/swagger';
 import { AiService } from './ai.service';
 import { YoutubeService } from '../youtube/youtube.service';
 import {
@@ -51,9 +58,14 @@ export class AiController {
     description: 'Invalid YouTube URL',
   })
   async analyzeVideoByUrl(
+    @Req() req: any,
     @Body() dto: AnalyzeVideoByUrlDto,
+    @Query('languageOverride') languageOverride?: string,
+    @Query('toneOverride') toneOverride?: string,
   ): Promise<AnalyzeVideoResponseDto> {
     try {
+      const userId = req.user.id;
+
       // Step 1: Fetch transcript from YouTube
       const transcript = await this.youtubeService.getVideoTranscript(
         dto.videoUrl,
@@ -76,18 +88,24 @@ export class AiController {
       const videoData = await this.youtubeService.getVideoData(dto.videoUrl);
 
       // Step 3: Generate analysis using AI
-      const language = dto.language || 'en';
-      const tone = dto.tone || 'professional';
+      // Use query parameters as overrides, fallback to DTO values, then to user preferences
+      const language = languageOverride || dto.language;
+      const tone = toneOverride || dto.tone;
 
       const [titleRewrite, descriptionRewrite, keywordExtraction, chapters] =
         await Promise.all([
           this.aiService.generateTitleRewrite(
+            userId,
             transcript,
+            videoData.title,
             language,
             tone,
-            videoData.title,
           ),
-          this.aiService.generateDescriptionRewrite(transcript),
+          this.aiService.generateDescriptionRewrite(
+            userId,
+            transcript,
+            language,
+          ),
           this.aiService.extractKeywords(transcript),
           this.aiService.generateChapters(transcript),
         ]);
@@ -156,24 +174,33 @@ export class AiController {
     description: 'Invalid transcript text',
   })
   async analyzeVideoByText(
+    @Req() req: any,
     @Body() dto: AnalyzeVideoByTextDto,
+    @Query('languageOverride') languageOverride?: string,
+    @Query('toneOverride') toneOverride?: string,
   ): Promise<AnalyzeVideoResponseDto> {
     try {
+      const userId = req.user.id;
       const transcript = dto.transcript;
-      const language = dto.language || 'en';
-      const tone = dto.tone || 'professional';
+      const language = languageOverride || dto.language;
+      const tone = toneOverride || dto.tone;
       const originalTitle = dto.originalTitle || 'Untitled Video';
 
       // Generate analysis using AI
       const [titleRewrite, descriptionRewrite, keywordExtraction, chapters] =
         await Promise.all([
           this.aiService.generateTitleRewrite(
+            userId,
             transcript,
+            originalTitle,
             language,
             tone,
-            originalTitle,
           ),
-          this.aiService.generateDescriptionRewrite(transcript),
+          this.aiService.generateDescriptionRewrite(
+            userId,
+            transcript,
+            language,
+          ),
           this.aiService.extractKeywords(transcript),
           this.aiService.generateChapters(transcript),
         ]);
@@ -218,12 +245,15 @@ export class AiController {
     description: 'Invalid file or file type',
   })
   async analyzeVideoByFile(
+    @Req() req: any,
     @UploadedFile() file: Express.Multer.File,
     @Body() dto: AnalyzeVideoByFileDto,
   ): Promise<AnalyzeVideoResponseDto> {
     let tmpPath: string | null = null;
 
     try {
+      const userId = req.user.id;
+
       if (!file) {
         throw new HttpException(
           {
@@ -283,19 +313,24 @@ export class AiController {
       }
 
       // Step 2: Generate analysis
-      const language = dto.language || 'en';
-      const tone = dto.tone || 'professional';
+      const language = dto.language;
+      const tone = dto.tone;
       const originalTitle = dto.originalTitle || 'Untitled Video';
 
       const [titleRewrite, descriptionRewrite, keywordExtraction, chapters] =
         await Promise.all([
           this.aiService.generateTitleRewrite(
+            userId,
             transcript,
+            originalTitle,
             language,
             tone,
-            originalTitle,
           ),
-          this.aiService.generateDescriptionRewrite(transcript),
+          this.aiService.generateDescriptionRewrite(
+            userId,
+            transcript,
+            language,
+          ),
           this.aiService.extractKeywords(transcript),
           this.aiService.generateChapters(transcript),
         ]);

@@ -15,12 +15,21 @@ export class PromptsService {
     language: string,
     tone: string,
     originalTitle: string,
+    customInstructions?: string,
   ): string {
+    const customSection = customInstructions
+      ? `
+
+CUSTOM INSTRUCTIONS FROM USER:
+${customInstructions}
+Please incorporate these preferences into your title generation.`
+      : '';
+
     return `You are an expert YouTube Title Strategist.
 
 The user wants rewritten titles in:
-Language → {user_language}  
-Tone → {user_tone}
+Language → ${language}  
+Tone → ${tone}${customSection}
 
 Original Title:
 ${originalTitle}
@@ -53,8 +62,23 @@ Return ONLY valid JSON in this exact format:
    * 2. Description Rewrite Prompt
    * Creates SEO-optimized video description with strategic keyword placement
    */
-  public static getDescriptionRewritePrompt(transcript: string): string {
-    return `You are a YouTube SEO copywriter specializing in high-converting video descriptions.
+  public static getDescriptionRewritePrompt(
+    transcript: string,
+    language?: string,
+    tone?: string,
+    customInstructions?: string,
+  ): string {
+    const langInstruction = language
+      ? `\n\nIMPORTANT: Generate the description in ${language} language.`
+      : '';
+    const toneInstruction = tone
+      ? `\nTONE: Use a ${tone} tone throughout the description.`
+      : '';
+    const customSection = customInstructions
+      ? `\n\nCUSTOM INSTRUCTIONS FROM USER:\n${customInstructions}\nPlease incorporate these preferences into your description.`
+      : '';
+
+    return `You are a YouTube SEO copywriter specializing in high-converting video descriptions.${langInstruction}${toneInstruction}${customSection}
 
 ANALYZE THIS VIDEO TRANSCRIPT:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -214,8 +238,19 @@ NOTE: Estimate timestamps based on natural topic transitions in the transcript.`
    * 5. Thumbnail Text + Idea Generation Prompt
    * Creates thumbnail concepts with text overlays and visual ideas
    */
-  public static getThumbnailIdeaPrompt(transcript: string): string {
-    return `You are a YouTube thumbnail designer specializing in high-CTR visual concepts.
+  public static getThumbnailIdeaPrompt(
+    transcript: string,
+    thumbnailStyle?: string,
+    customInstructions?: string,
+  ): string {
+    const styleInstruction = thumbnailStyle
+      ? `\n\nTHUMBNAIL STYLE REQUIREMENT: All thumbnails must follow ${thumbnailStyle} style. This should influence the visual concept, composition, and overall aesthetic.`
+      : '';
+    const customSection = customInstructions
+      ? `\n\nCUSTOM INSTRUCTIONS FROM USER:\n${customInstructions}\nPlease incorporate these preferences into your thumbnail concepts.`
+      : '';
+
+    return `You are a YouTube thumbnail designer specializing in high-CTR visual concepts.${styleInstruction}${customSection}
 
 ANALYZE THIS VIDEO TRANSCRIPT:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -281,8 +316,19 @@ Generate exactly 5 diverse thumbnail ideas.`;
    * 6. AI Image Generation Prompts for Thumbnails
    * Creates detailed prompts for AI image generators (DALL-E, Midjourney, etc.)
    */
-  public static getThumbnailAIPrompt(transcript: string): string {
-    return `You are an AI image prompt engineer specializing in creating detailed prompts for YouTube thumbnail generation.
+  public static getThumbnailAIPrompt(
+    transcript: string,
+    imageStyle?: string,
+    customInstructions?: string,
+  ): string {
+    const styleInstruction = imageStyle
+      ? `\n\nIMAGE STYLE REQUIREMENT: All AI prompts must use ${imageStyle} style. Include this style specification in every prompt you generate (e.g., "photorealistic", "illustration", "3D render", "anime style", "watercolor", etc.).`
+      : '';
+    const customSection = customInstructions
+      ? `\n\nCUSTOM INSTRUCTIONS FROM USER:\n${customInstructions}\nPlease incorporate these preferences into your AI image prompts.`
+      : '';
+
+    return `You are an AI image prompt engineer specializing in creating detailed prompts for YouTube thumbnail generation.${styleInstruction}${customSection}
 
 ANALYZE THIS VIDEO TRANSCRIPT:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

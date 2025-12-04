@@ -20,6 +20,7 @@ import { HealthModule } from './health/health.module';
 import { UserFeedbackModule } from './user-feedback/user-feedback.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { NotificationModule } from './notifications/notification.module';
+import { UserPreferencesModule } from './user-preferences/user-preferences.module';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { NotificationModule } from './notifications/notification.module';
     LoggingModule,
     UserFeedbackModule,
     NotificationModule,
+    UserPreferencesModule,
   ],
   controllers: [AppController],
   providers: [

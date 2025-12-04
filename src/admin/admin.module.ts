@@ -12,9 +12,17 @@ import { CSRFService } from 'src/common/csrf.service';
 import { AdminService } from './admin.service';
 import { JwtModule, JwtService } from '@nestjs/jwt';
 import { InvitationService } from 'src/auth/invitation.service';
+import { UserPreferencesModule } from 'src/user-preferences/user-preferences.module';
 
 @Module({
-  imports: [SupabaseModule, HttpModule, CommonModule, JwtModule, NotificationModule],
+  imports: [
+    SupabaseModule,
+    HttpModule,
+    CommonModule,
+    JwtModule,
+    NotificationModule,
+    UserPreferencesModule,
+  ],
   controllers: [AdminController],
   providers: [
     AuthService,

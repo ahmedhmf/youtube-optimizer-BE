@@ -66,3 +66,29 @@ export interface NotificationStats {
   unread: number;
   byType: Record<NotificationType, number>;
 }
+
+// Queue-related types for real-time updates
+export enum QueueEventType {
+  JOB_QUEUED = 'job-queued',
+  JOB_STARTED = 'job-started',
+  JOB_PROGRESS = 'job-progress',
+  JOB_COMPLETED = 'job-completed',
+  JOB_FAILED = 'job-failed',
+  JOB_CANCELLED = 'job-cancelled',
+}
+
+export interface QueueUpdatePayload {
+  jobId: string;
+  eventType: QueueEventType;
+  progress?: number;
+  stage?: string;
+  message?: string;
+  error?: string;
+  result?: any;
+  metadata?: {
+    videoTitle?: string;
+    videoUrl?: string;
+    jobType?: string;
+    [key: string]: any;
+  };
+}

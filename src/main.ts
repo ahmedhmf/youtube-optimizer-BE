@@ -85,43 +85,12 @@ async function bootstrap() {
 
   app.use('/auth', authLimiter);
 
-  // CSRF Protection - Disabled for JWT-based API
-  // Note: CSRF protection is not needed for stateless JWT authentication
-  // since tokens are sent in Authorization headers (not cookies)
-  // JWT-based APIs are naturally immune to CSRF attacks
-  // If you need CSRF protection for cookie-based sessions, uncomment below:
-  /*
-  const csrfService = app.get(CSRFService);
-  app.use((req: Request, res: Response, next: NextFunction) => {
-    // Skip CSRF for public authentication endpoints and health check
-    const skipCSRFPaths = [
-      '/auth/register',
-      '/auth/login',
-      '/auth/refresh',
-      '/auth/forgot-password',
-      '/auth/reset-password',
-      '/auth/csrf-token',
-      '/auth/social/google',
-      '/auth/social/google/url',
-      '/auth/social/google/callback',
-      '/health',
-    ];
-    if (skipCSRFPaths.some((path) => req.path === path)) {
-      return next();
-    }
-
-    // Apply CSRF middleware for authenticated routes
-    return csrfService.middleware()(req, res, next);
-  });
-  */
-
-  // Enhanced validation pipes with sanitization
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
       forbidNonWhitelisted: true,
       transform: true,
-      disableErrorMessages: isProduction, // Don't expose validation details in production
+      disableErrorMessages: isProduction,
       validationError: {
         target: false,
         value: false,
