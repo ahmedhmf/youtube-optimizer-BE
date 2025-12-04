@@ -8,7 +8,12 @@ import { UserPreferencesModule } from '../user-preferences/user-preferences.modu
 import { NotificationModule } from '../notifications/notification.module';
 
 @Module({
-  imports: [YoutubeModule, LoggingModule, UserPreferencesModule, NotificationModule],
+  imports: [
+    YoutubeModule,
+    LoggingModule,
+    UserPreferencesModule,
+    NotificationModule,
+  ],
   providers: [AiService, PromptsService],
   controllers: [AiController],
   exports: [AiService],

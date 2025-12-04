@@ -21,7 +21,12 @@ import {
 } from '../logging/dto/log.types';
 import { SystemLogService } from '../logging/services/system-log.service';
 import { QueueGateway } from './queue.gateway';
-import { QueueEventType, QueueUpdatePayload, NotificationType, NotificationSeverity } from '../notifications/models/notification.types';
+import {
+  QueueEventType,
+  QueueUpdatePayload,
+  NotificationType,
+  NotificationSeverity,
+} from '../notifications/models/notification.types';
 import { NotificationService } from '../notifications/notification.service';
 
 @Injectable()
@@ -54,7 +59,7 @@ export class DatabaseQueueService implements OnModuleInit {
   }
 
   async addVideoAnalysisJob(jobData: VideoAnalysisJob): Promise<string> {
-    const client = this.supabase.getClient();
+    const client = this.supabase.getServiceClient();
 
     // Get video data for YouTube jobs
     let videoTitle = 'Video Analysis Job';
@@ -144,17 +149,22 @@ export class DatabaseQueueService implements OnModuleInit {
     );
 
     // Send real-time queue update
-    this.sendQueueUpdate(jobData.userId, data.id.toString(), QueueEventType.JOB_QUEUED, {
-      progress: 0,
-      stage: 'queued',
-      message: `Job queued at position ${queuePosition}. Estimated wait: ${estimatedWaitTime} minutes`,
-      metadata: {
-        jobType: jobData.type,
-        queuePosition,
-        estimatedWaitTime,
-        videoTitle,
+    this.sendQueueUpdate(
+      jobData.userId,
+      data.id.toString(),
+      QueueEventType.JOB_QUEUED,
+      {
+        progress: 0,
+        stage: 'queued',
+        message: `Job queued at position ${queuePosition}. Estimated wait: ${estimatedWaitTime} minutes`,
+        metadata: {
+          jobType: jobData.type,
+          queuePosition,
+          estimatedWaitTime,
+          videoTitle,
+        },
       },
-    });
+    );
 
     // Trigger immediate processing check
     setTimeout(() => {
@@ -178,8 +188,8 @@ export class DatabaseQueueService implements OnModuleInit {
       stage?: string;
       message?: string;
       error?: string;
-      result?: any;
-      metadata?: Record<string, any>;
+      result?: Record<string, unknown>;
+      metadata?: Record<string, unknown>;
     },
   ): void {
     try {
@@ -196,16 +206,13 @@ export class DatabaseQueueService implements OnModuleInit {
 
       this.queueGateway.sendQueueUpdateToUser(userId, queueUpdate);
     } catch (error) {
-      this.logger.error(
-        `Failed to send queue update for job ${jobId}:`,
-        error,
-      );
+      this.logger.error(`Failed to send queue update for job ${jobId}:`, error);
       // Don't throw - queue updates are non-critical
     }
   }
 
   async getJobStatus(jobId: string) {
-    const client = this.supabase.getClient();
+    const client = this.supabase.getServiceClient();
 
     const { data: job, error } = await client
       .from('job_queue')
@@ -230,7 +237,7 @@ export class DatabaseQueueService implements OnModuleInit {
   }
 
   async cancelJob(jobId: string): Promise<boolean> {
-    const client = this.supabase.getClient();
+    const client = this.supabase.getServiceClient();
 
     // First, check if the job is currently being processed
     const jobIdStr = jobId.toString();
@@ -252,7 +259,8 @@ export class DatabaseQueueService implements OnModuleInit {
       })
       .eq('id', jobId)
       .in('status', ['pending', 'processing']) // This should work for both pending and processing jobs
-      .select();
+      .select()
+      .returns<DBJobResultModel[]>();
 
     this.logger.log('Cancel job result:', {
       jobId,
@@ -309,7 +317,7 @@ export class DatabaseQueueService implements OnModuleInit {
   }
 
   async getUserJobs(userId: string) {
-    const client = this.supabase.getClient();
+    const client = this.supabase.getServiceClient();
 
     const { data: jobs, error } = await client
       .from('job_queue')
@@ -347,7 +355,7 @@ export class DatabaseQueueService implements OnModuleInit {
     this.isProcessing = true;
 
     try {
-      const client = this.supabase.getClient();
+      const client = this.supabase.getServiceClient();
 
       // Get all pending jobs ordered by creation time (FIFO)
       const { data: pendingJobs, error } = await client
@@ -472,7 +480,7 @@ export class DatabaseQueueService implements OnModuleInit {
   }
 
   async retryJob(jobId: string): Promise<string> {
-    const client = this.supabase.getClient();
+    const client = this.supabase.getServiceClient();
 
     // Get the original job
     const { data: originalJob, error: fetchError } = await client
@@ -542,6 +550,97 @@ export class DatabaseQueueService implements OnModuleInit {
     return newJob.id.toString();
   }
 
+  /**
+   * Restart a failed or cancelled job (resets the same job instead of creating new one)
+   */
+  async restartJob(jobId: string): Promise<boolean> {
+    const client = this.supabase.getServiceClient();
+    console.log('Restarting job:', jobId);
+    // Get the job
+    const { data: job, error: fetchError } = await client
+      .from('job_queue')
+      .select('*')
+      .eq('id', jobId)
+      .single<DBJobResultModel>();
+
+    if (fetchError || !job) {
+      throw new Error('Job not found');
+    }
+
+    // Check if job can be restarted
+    if (job.status !== 'failed' && job.status !== 'cancelled') {
+      throw new Error('Only failed or cancelled jobs can be restarted');
+    }
+
+    this.logger.log(`Restarting job ${jobId} for user ${job.user_id}`);
+
+    // Check rate limit for user
+    const { count: userJobCount } = await client
+      .from('job_queue')
+      .select('id', { count: 'exact' })
+      .eq('user_id', job.user_id)
+      .in('status', ['pending', 'processing']);
+
+    if (userJobCount ?? 0 >= this.MAX_JOBS_PER_USER) {
+      throw new Error(
+        `Too many jobs in queue. Maximum ${this.MAX_JOBS_PER_USER} concurrent jobs allowed.`,
+      );
+    }
+
+    // Reset the job to pending status
+    const { error: updateError } = await client
+      .from('job_queue')
+      .update({
+        status: 'pending',
+        progress: 0,
+        error_message: null,
+        started_at: null,
+        completed_at: null,
+      })
+      .eq('id', jobId)
+      .select()
+      .single<DBJobResultModel>();
+
+    if (updateError) {
+      this.logger.error('Failed to restart job:', updateError);
+      throw new Error(`Failed to restart job: ${updateError.message}`);
+    }
+
+    this.logger.log(`Job ${jobId} restarted successfully`);
+
+    // Send WebSocket update
+    if (job.user_id) {
+      this.sendQueueUpdate(job.user_id, jobId, QueueEventType.JOB_QUEUED, {
+        progress: 0,
+        stage: 'queued',
+        message: 'Job restarted and queued for processing',
+        metadata: {
+          jobType: job.job_type,
+          restarted: true,
+        },
+      });
+
+      // Send persistent notification
+      await this.notificationService.sendNotification(
+        job.user_id,
+        'Job Restarted',
+        `Your ${job.job_type === 'youtube' ? 'YouTube video' : job.job_type === 'upload' ? 'uploaded video' : 'transcript'} analysis has been restarted.`,
+        NotificationType.PROCESSING,
+        { jobId, jobType: job.job_type },
+        NotificationSeverity.INFO,
+      );
+    }
+
+    // Trigger immediate processing
+    setTimeout(() => {
+      this.processJobs().catch((error) => {
+        this.logger.error('Error in delayed processJobs:', error);
+      });
+    }, 100);
+
+    return true;
+  }
+
   private async processJobAsync(job: DBJobResultModel) {
     const jobId = job.id.toString();
     this.activeJobs.add(jobId);
@@ -556,7 +655,7 @@ export class DatabaseQueueService implements OnModuleInit {
   }
 
   private async processJob(job: DBJobResultModel) {
-    const client = this.supabase.getClient();
+    const client = this.supabase.getServiceClient();
     const jobId = job.id.toString();
     const userId = job.user_id || '';
 
@@ -677,7 +776,12 @@ export class DatabaseQueueService implements OnModuleInit {
           throw new Error(`Unknown job type: ${job.job_type}`);
       }
 
-      await this.updateJobProgress(jobId.toString(), 90, 'Saving results', userId);
+      await this.updateJobProgress(
+        jobId.toString(),
+        90,
+        'Saving results',
+        userId,
+      );
 
       // Save the audit
       const url =
@@ -731,8 +835,8 @@ export class DatabaseQueueService implements OnModuleInit {
           'Analysis Complete! 🎉',
           `Your video analysis is ready. Click to view the results.`,
           NotificationType.PROCESSING,
-          { 
-            jobId, 
+          {
+            jobId,
             auditId: savedAudit.id,
             jobType: job.job_type,
           },
@@ -757,7 +861,8 @@ export class DatabaseQueueService implements OnModuleInit {
     } catch (error) {
       this.logger.error(`Job ${jobId} failed:`, error);
 
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
 
       // Mark as failed
       await client
@@ -788,8 +893,8 @@ export class DatabaseQueueService implements OnModuleInit {
           'Analysis Failed',
           `Your video analysis failed: ${errorMessage}`,
           NotificationType.PROCESSING,
-          { 
-            jobId, 
+          {
+            jobId,
             jobType: job.job_type,
             error: errorMessage,
           },
@@ -811,8 +916,13 @@ export class DatabaseQueueService implements OnModuleInit {
     }
   }
 
-  private async updateJobProgress(jobId: string, progress: number, stage?: string, userId?: string) {
-    const client = this.supabase.getClient();
+  private async updateJobProgress(
+    jobId: string,
+    progress: number,
+    stage?: string,
+    userId?: string,
+  ) {
+    const client = this.supabase.getServiceClient();
     await client.from('job_queue').update({ progress }).eq('id', jobId);
 
     // Send real-time progress update if userId is provided
@@ -863,7 +973,7 @@ export class DatabaseQueueService implements OnModuleInit {
     // Optionally generate thumbnail ideas (can be skipped for faster processing)
     let thumbnailIdeas: any[] = [];
     let thumbnailAIPrompts: string[] = [];
-    
+
     try {
       [thumbnailIdeas, thumbnailAIPrompts] = await Promise.all([
         this.aiService.generateThumbnailIdeas(userId, transcript),
@@ -901,7 +1011,7 @@ export class DatabaseQueueService implements OnModuleInit {
     await this.updateJobProgress(jobId, 30, 'Preparing upload');
 
     // Get user ID from job
-    const client = this.supabase.getClient();
+    const client = this.supabase.getServiceClient();
     const { data: job } = await client
       .from('job_queue')
       .select('user_id')
@@ -1034,7 +1144,7 @@ export class DatabaseQueueService implements OnModuleInit {
   @Cron(CronExpression.EVERY_HOUR) // Run every hour instead of daily
   async cleanupOldJobs() {
     const startTime = Date.now();
-    const client = this.supabase.getClient();
+    const client = this.supabase.getServiceClient();
 
     try {
       // Clean up completed jobs older than 1 hour (instead of 7 days)

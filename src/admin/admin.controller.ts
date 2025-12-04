@@ -27,7 +27,6 @@ import { RequirePermissions } from '../auth/decorators/permissions.decorator';
 import { UserRole } from '../auth/types/roles.types';
 import { AuthService } from '../auth/auth.service';
 import { PaginationQueryDto } from '../DTO/pagination-query.dto';
-import { CSRFGuard } from '../auth/guards/csrf.guard';
 import { AdminService } from './admin.service';
 import { UpdateUserDto } from './dto/update-user-info.dto';
 import { UserLogService } from '../logging/services/user-log.service';
@@ -91,7 +90,6 @@ export class AdminController {
     },
   })
   @ApiResponse({ status: 403, description: 'Insufficient permissions' })
-  @UseGuards(JwtAuthGuard, CSRFGuard)
   getAllUsers(@Query() query: PaginationQueryDto) {
     console.log('AdminController.getAllUsers called with query:', query);
     return this.adminService.getAllUsers(query);
@@ -394,7 +392,6 @@ export class AdminController {
   @ApiResponse({ status: 400, description: 'Invalid update data' })
   @ApiResponse({ status: 403, description: 'Insufficient permissions' })
   @ApiResponse({ status: 404, description: 'User not found' })
-  @UseGuards(JwtAuthGuard, CSRFGuard)
   async updateUser(
     @Param('id') userId: string,
     @Body() updateData: UpdateUserDto,
@@ -463,7 +460,6 @@ export class AdminController {
     description: 'Usage overview retrieved successfully',
   })
   @ApiResponse({ status: 404, description: 'User not found' })
-  @UseGuards(JwtAuthGuard, CSRFGuard)
   async getUserUsageOverview(@Param('id') userId: string) {
     const usageOverview = await this.adminService.getUserUsageOverview(userId);
 
@@ -520,7 +516,8 @@ export class AdminController {
         },
         callback: {
           type: 'string',
-          description: 'Callback identifier for frontend action handler (optional)',
+          description:
+            'Callback identifier for frontend action handler (optional)',
           example: 'refreshVideoList',
         },
         metadata: {
@@ -543,7 +540,6 @@ export class AdminController {
       },
     },
   })
-  @UseGuards(JwtAuthGuard, CSRFGuard)
   async sendNotification(
     @Body()
     body: {

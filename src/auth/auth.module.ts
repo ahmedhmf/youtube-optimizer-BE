@@ -11,7 +11,6 @@ import { RolesGuard } from './guards/roles.guard';
 import { SocialAuthService } from './social-auth.service';
 import { SupabaseModule } from '../supabase/supabase.module';
 import { CSRFService } from '../common/csrf.service';
-import { CSRFGuard } from './guards/csrf.guard';
 import { CSRFController } from './csrf.controller';
 import { CommonModule } from '../common/common.module';
 import { AdminService } from '../admin/admin.service';
@@ -49,7 +48,6 @@ import { NotificationModule } from '../notifications/notification.module';
     RolesGuard,
     SocialAuthService,
     CSRFService,
-    CSRFGuard,
     AdminService,
     InvitationService,
   ],

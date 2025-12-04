@@ -7,6 +7,14 @@ import { SystemLogService } from '../logging/services/system-log.service';
 import { LogSeverity, SystemLogCategory } from '../logging/dto/log.types';
 import { Innertube } from 'youtubei.js';
 
+interface TranscriptSegment {
+  snippet?: {
+    text?: string;
+  };
+  start_ms?: number;
+  duration_ms?: number;
+}
+
 interface YouTubeApiResponse {
   items?: {
     snippet: {
@@ -128,7 +136,7 @@ export class YoutubeService {
    * @param url - YouTube video URL
    * @returns Transcript text as a single string
    */
-  /* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return */
+  /* eslint-disable @typescript-eslint/no-unsafe-member-access */
   async getVideoTranscript(url: string): Promise<string> {
     const videoId = this.extractVideoId(url);
     const startTime = Date.now();
@@ -160,11 +168,12 @@ export class YoutubeService {
       }
 
       // Extract text from transcript segments
-      const segments: any[] =
-        transcriptData.transcript?.content?.body?.initial_segments || [];
+      const segments: TranscriptSegment[] =
+        (transcriptData.transcript?.content?.body
+          ?.initial_segments as TranscriptSegment[]) || [];
 
       const transcriptText: string = segments
-        .map((segment: any) => segment.snippet?.text || '')
+        .map((segment) => segment.snippet?.text || '')
         .join(' ')
         .replace(/\s+/g, ' ')
         .trim();
@@ -209,7 +218,7 @@ export class YoutubeService {
       );
     }
   }
-  /* eslint-enable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return */
+  /* eslint-enable @typescript-eslint/no-unsafe-member-access */
 
   /**
    * Fetch video transcript with timestamps using youtubei.js
@@ -244,11 +253,12 @@ export class YoutubeService {
       }
 
       // Extract segments with timestamps
-      const initialSegments: any[] =
-        transcriptData.transcript?.content?.body?.initial_segments || [];
+      const initialSegments: TranscriptSegment[] =
+        (transcriptData.transcript?.content?.body
+          ?.initial_segments as TranscriptSegment[]) || [];
 
       const segments: { text: string; startMs: number; durationMs: number }[] =
-        initialSegments.map((segment: any) => ({
+        initialSegments.map((segment) => ({
           text: (segment.snippet?.text as string) || '',
           startMs: (segment.start_ms as number) || 0,
           durationMs: (segment.duration_ms as number) || 0,

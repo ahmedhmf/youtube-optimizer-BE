@@ -1,4 +1,4 @@
-import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { NotificationRepository } from './notification.repository';
 import {
   Notification,
@@ -9,17 +9,24 @@ import {
   NotificationSeverity,
 } from './models/notification.types';
 
+interface INotificationGateway {
+  sendNotificationToUser(
+    userId: string,
+    notification: Notification,
+  ): Promise<void>;
+}
+
 @Injectable()
 export class NotificationService {
   private readonly logger = new Logger(NotificationService.name);
-  private notificationGateway: any; // Will be set by gateway
+  private notificationGateway?: INotificationGateway; // Will be set by gateway
 
   constructor(private readonly repository: NotificationRepository) {}
 
   /**
    * Set gateway reference (called by gateway on init)
    */
-  setGateway(gateway: any): void {
+  setGateway(gateway: INotificationGateway): void {
     this.notificationGateway = gateway;
   }
 
@@ -41,9 +48,7 @@ export class NotificationService {
     actionButtonText?: string,
     callback?: string,
   ): Promise<Notification | null> {
-    this.logger.log(
-      `Sending ${type} notification to user ${userId}: ${title}`,
-    );
+    this.logger.log(`Sending ${type} notification to user ${userId}: ${title}`);
 
     const notification = await this.repository.createNotification({
       userId,
@@ -190,7 +195,7 @@ export class NotificationService {
     return this.sendNotification(
       userId,
       'AI Analysis Started',
-      'Your video is being analyzed. We\'ll notify you when it\'s complete.',
+      "Your video is being analyzed. We'll notify you when it's complete.",
       NotificationType.PROCESSING,
       { videoId, videoUrl },
     );
@@ -363,7 +368,7 @@ export class NotificationService {
     return this.sendNotification(
       userId,
       'Password Changed',
-      'Your password was successfully changed. If you didn\'t make this change, contact support immediately.',
+      "Your password was successfully changed. If you didn't make this change, contact support immediately.",
       NotificationType.SECURITY,
       { actionUrl: '/support' },
     );

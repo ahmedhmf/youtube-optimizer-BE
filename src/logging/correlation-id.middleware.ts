@@ -7,12 +7,10 @@ export const CORRELATION_ID_HEADER = 'x-correlation-id';
 @Injectable()
 export class CorrelationIdMiddleware implements NestMiddleware {
   use(req: Request, res: Response, next: NextFunction) {
-    // Get correlation ID from header or generate new one
     const correlationId =
       (req.headers[CORRELATION_ID_HEADER] as string) || uuidv4();
 
-    // Store in request object for later use
-    (req as any).correlationId = correlationId;
+    (req as Request & { correlationId: string }).correlationId = correlationId;
 
     // Add to response headers
     res.setHeader(CORRELATION_ID_HEADER, correlationId);

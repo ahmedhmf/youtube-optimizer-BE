@@ -6,6 +6,19 @@ import {
   UpdateContentPreferencesDto,
 } from './types/user-content-preferences.types';
 
+interface DBUserContentPreferences {
+  id: string;
+  user_id: string;
+  tone: string | null;
+  thumbnail_style: string | null;
+  image_style: string | null;
+  language: string | null;
+  custom_instructions: string | null;
+  is_completed: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 @Injectable()
 export class UserPreferencesService {
   private readonly logger = new Logger(UserPreferencesService.name);
@@ -23,7 +36,7 @@ export class UserPreferencesService {
         .from('user_content_preferences')
         .select('*')
         .eq('user_id', userId)
-        .single();
+        .single<DBUserContentPreferences>();
 
       if (error) {
         if (error.code === 'PGRST116') {
@@ -80,9 +93,9 @@ export class UserPreferencesService {
           is_completed: isCompleted,
         })
         .select()
-        .single();
+        .single<DBUserContentPreferences>();
 
-      if (error) throw error;
+      if (error || !data) throw error;
 
       this.logger.log(`Created preferences for user ${userId}`);
       return this.mapToPreferences(data);
@@ -128,9 +141,9 @@ export class UserPreferencesService {
         })
         .eq('user_id', userId)
         .select()
-        .single();
+        .single<DBUserContentPreferences>();
 
-      if (error) throw error;
+      if (error || !data) throw error;
 
       this.logger.log(`Updated preferences for user ${userId}`);
       return this.mapToPreferences(data);
@@ -172,15 +185,17 @@ export class UserPreferencesService {
   /**
    * Map database row to UserContentPreferences
    */
-  private mapToPreferences(data: any): UserContentPreferences {
+  private mapToPreferences(
+    data: DBUserContentPreferences,
+  ): UserContentPreferences {
     return {
       id: data.id,
       userId: data.user_id,
-      tone: data.tone,
-      thumbnailStyle: data.thumbnail_style,
-      imageStyle: data.image_style,
-      language: data.language,
-      customInstructions: data.custom_instructions,
+      tone: data.tone ?? undefined,
+      thumbnailStyle: data.thumbnail_style ?? undefined,
+      imageStyle: data.image_style ?? undefined,
+      language: data.language ?? undefined,
+      customInstructions: data.custom_instructions ?? undefined,
       isCompleted: data.is_completed,
       createdAt: new Date(data.created_at),
       updatedAt: new Date(data.updated_at),

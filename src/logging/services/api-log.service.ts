@@ -23,7 +23,7 @@ export class ApiLogService {
   async logRequest(data: ApiLogData): Promise<void> {
     try {
       // Only log to Supabase if it's a critical event
-      const isCritical = 
+      const isCritical =
         data.statusCode >= 500 || // Server errors
         data.rateLimitHit || // Rate limit exceeded
         data.statusCode === 401 || // Unauthorized

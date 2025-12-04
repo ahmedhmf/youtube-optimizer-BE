@@ -92,3 +92,18 @@ export interface QueueUpdatePayload {
     [key: string]: any;
   };
 }
+
+export interface DBNotification {
+  id: string;
+  user_id: string;
+  title: string;
+  message: string;
+  type: NotificationType;
+  severity: NotificationSeverity;
+  action_url: string | null;
+  action_button_text: string | null;
+  callback: string | null;
+  read: boolean;
+  created_at: string;
+  metadata: Record<string, unknown>;
+}

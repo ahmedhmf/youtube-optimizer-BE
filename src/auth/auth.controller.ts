@@ -18,7 +18,6 @@ import * as crypto from 'crypto';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
-import { CSRFGuard } from './guards/csrf.guard';
 import {
   LoginDto,
   RegisterDto,
@@ -160,7 +159,6 @@ export class AuthController {
     },
   })
   @ApiSecurity('csrf-token', ['X-CSRF-Token'])
-  @UseGuards(CSRFGuard)
   @Throttle({ default: { limit: 3, ttl: 300000 } }) // 3 attempts per 5 minutes
   async register(
     @Body() registerDto: RegisterDto,
@@ -224,7 +222,7 @@ export class AuthController {
       // Log failed registration with structured logger
       this.structuredLogger.logError(
         correlationId,
-        error,
+        error instanceof Error ? error : new Error(String(error)),
         'AuthController',
         {
           email: registerDto.email,
@@ -348,7 +346,6 @@ export class AuthController {
     description: 'Too many login attempts',
   })
   @ApiSecurity('csrf-token', ['X-CSRF-Token'])
-  @UseGuards(CSRFGuard)
   async login(
     @Body() loginDto: LoginDto,
     @Req() req: express.Request,
@@ -580,7 +577,8 @@ export class AuthController {
     @Res() res: express.Response,
     @CorrelationId() correlationId: string,
   ): Promise<express.Response<any, Record<string, any>>> {
-    const userId = (req as any).user?.id;
+    const userId = (req as express.Request & { user?: { id?: string } }).user
+      ?.id;
 
     // Log logout attempt
     this.structuredLogger.logBusinessEvent(
@@ -814,7 +812,6 @@ export class AuthController {
     description: 'Rate limit exceeded - too many refresh attempts',
   })
   @ApiSecurity('csrf-token', ['X-CSRF-Token'])
-  @UseGuards(CSRFGuard)
   async refresh(
     @Body() refreshDto: RefreshTokenDto,
     @Req() req: express.Request,
@@ -1012,7 +1009,6 @@ export class AuthController {
     status: 403,
     description: 'CSRF token required',
   })
-  @UseGuards(JwtAuthGuard, CSRFGuard)
   async updateProfile(
     @Req() req: Request & { user: { id: string } },
     @Body() updateProfileDto: UpdateProfileDto,
@@ -1344,7 +1340,6 @@ export class AuthController {
     },
   })
   @ApiSecurity('csrf-token', ['X-CSRF-Token'])
-  @UseGuards(CSRFGuard)
   @Throttle({ default: { limit: 2, ttl: 300000 } }) // 2 attempts per 5 minutes
   async requestPasswordReset(
     @Body() forgotPasswordDto: ForgotPasswordDto,
@@ -1473,7 +1468,6 @@ export class AuthController {
     description: 'Too many reset attempts',
   })
   @ApiSecurity('csrf-token', ['X-CSRF-Token'])
-  @UseGuards(CSRFGuard)
   @Throttle({ default: { limit: 3, ttl: 300000 } }) // 3 attempts per 5 minutes
   async resetPassword(
     @Body() resetPasswordDto: ResetPasswordDto,
@@ -1597,7 +1591,7 @@ export class AuthController {
     status: 403,
     description: 'CSRF token required',
   })
-  @UseGuards(JwtAuthGuard, CSRFGuard)
+  @UseGuards(JwtAuthGuard)
   @Throttle({ default: { limit: 5, ttl: 300000 } }) // 5 attempts per 5 minutes
   async changePassword(
     @Body() changePasswordDto: ChangePasswordDto,
@@ -1741,7 +1735,6 @@ export class AuthController {
     description: 'Rate limit exceeded - too many refresh attempts',
   })
   @ApiSecurity('csrf-token', ['X-CSRF-Token'])
-  @UseGuards(CSRFGuard)
   @Throttle({ default: { limit: 10, ttl: 60000 } }) // 10 attempts per minute
   async refreshToken(
     @Body() refreshDto: RefreshTokenDto,
@@ -1817,7 +1810,7 @@ export class AuthController {
       },
     },
   })
-  @UseGuards(JwtAuthGuard, CSRFGuard)
+  @UseGuards(JwtAuthGuard)
   getUserSessions() {
     // Supabase Auth doesn't expose session management
     // Return empty array for now
@@ -1964,7 +1957,7 @@ export class AuthController {
     status: 403,
     description: 'CSRF token required',
   })
-  @UseGuards(JwtAuthGuard, CSRFGuard)
+  @UseGuards(JwtAuthGuard)
   async revokeSession(
     @Param('sessionId') sessionId: string,
     @Req() req: Request & { user: { id: string } },

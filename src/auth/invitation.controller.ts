@@ -17,6 +17,7 @@ import {
   CreateInvitationDto,
   ValidateInvitationDto,
 } from './dto/invitation.dto';
+import type { AuthenticatedRequest } from 'src/user-feedback/types/authenticated-request.types';
 
 @ApiTags('invitations')
 @Controller('invitations')
@@ -45,7 +46,10 @@ export class InvitationController {
     summary: 'Create invitation (Admin only)',
     description: 'Generate a new invitation code for beta testing',
   })
-  async createInvitation(@Body() dto: CreateInvitationDto, @Req() req: any) {
+  async createInvitation(
+    @Body() dto: CreateInvitationDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
     const userId = req.user?.id;
     const invitation = await this.invitationService.createInvitation(
       dto,

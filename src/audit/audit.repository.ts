@@ -52,11 +52,10 @@ export class AuditRepository {
         ai_thumbnail_ai_prompts: analysis.thumbnailAIPrompts || [],
       })
       .select()
-      .single();
+      .single<DBAuditResultModel['data']>();
 
     const { data: savedAudit, error } = result;
     if (error) throw new Error(error.message);
-    if (!savedAudit) throw new Error('Failed to save audit');
     return savedAudit;
   }
 

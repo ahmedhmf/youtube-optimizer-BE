@@ -724,6 +724,87 @@ export class AuditController {
     }
   }
 
+  @ApiOperation({
+    summary: 'Restart Failed/Cancelled Analysis Job',
+    description:
+      'Restart a failed or cancelled analysis job by resetting it to pending status (uses same job ID). Only failed or cancelled jobs can be restarted.',
+  })
+  @ApiParam({
+    name: 'jobId',
+    description: 'Unique identifier for the failed/cancelled job to restart',
+    example: 'queue_failed_123',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Job restarted successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean', example: true },
+        jobId: { type: 'string', example: 'queue_failed_123' },
+        message: {
+          type: 'string',
+          example: 'Job has been restarted successfully',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Job cannot be restarted or unauthorized access',
+  })
+  @ApiResponse({ status: 401, description: 'Authentication required' })
+  @Post('job/:jobId/restart')
+  @UseGuards(JwtAuthGuard)
+  async restartJob(
+    @Param('jobId') jobId: string,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    try {
+      const job = await this.queueService.getJobStatus(jobId);
+
+      // Check if user owns this job
+      if (job.data && job.data.userId !== req.user.id) {
+        throw new BadRequestException('Unauthorized access to job');
+      }
+
+      // Check if job can be restarted
+      if (job.status !== 'failed' && job.status !== 'cancelled') {
+        throw new BadRequestException(
+          'Only failed or cancelled jobs can be restarted',
+        );
+      }
+
+      const restarted = await this.queueService.restartJob(jobId);
+
+      // Log job restart
+      await this.userLogService.logActivity({
+        userId: req.user.id,
+        logType: LogType.ACTIVITY,
+        activityType: 'job_restarted',
+        description: 'User restarted a failed/cancelled analysis job',
+        severity: LogSeverity.INFO,
+        ipAddress: req.ip,
+        userAgent: String(req.headers['user-agent'] || 'unknown'),
+        metadata: {
+          jobId,
+          previousStatus: job.status,
+          jobType: job.data?.type,
+        },
+      });
+
+      return {
+        success: restarted,
+        jobId,
+        message: 'Job has been restarted successfully',
+      };
+    } catch (error) {
+      throw new BadRequestException(
+        `Failed to retry job: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+    }
+  }
+
   // Keep your existing endpoints as they are
   @ApiOperation({
     summary: 'Get User Analysis History',

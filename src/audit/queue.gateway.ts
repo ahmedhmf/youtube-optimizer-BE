@@ -22,9 +22,7 @@ interface AuthenticatedSocket extends Socket {
     credentials: true,
   },
 })
-export class QueueGateway
-  implements OnGatewayConnection, OnGatewayDisconnect
-{
+export class QueueGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
 
@@ -39,11 +37,13 @@ export class QueueGateway
   async handleConnection(client: AuthenticatedSocket) {
     try {
       // Extract token from handshake
+      const authToken = client.handshake.auth?.token as string | undefined;
+      const authHeader = client.handshake.headers?.authorization;
       const token =
-        client.handshake.auth?.token ||
-        client.handshake.headers?.authorization?.split(' ')[1];
+        authToken ||
+        (typeof authHeader === 'string' ? authHeader.split(' ')[1] : undefined);
 
-      if (!token) {
+      if (!token || typeof token !== 'string') {
         this.logger.warn(`Connection rejected: No token provided`);
         client.disconnect();
         return;
@@ -98,7 +98,7 @@ export class QueueGateway
    * Subscribe to queue updates (client can request this)
    */
   @SubscribeMessage('subscribe-queue')
-  async handleSubscribe(@ConnectedSocket() client: AuthenticatedSocket) {
+  handleSubscribe(@ConnectedSocket() client: AuthenticatedSocket): void {
     const userId = client.userId;
     if (!userId) return;
 
@@ -132,13 +132,17 @@ export class QueueGateway
    */
   private async verifyToken(token: string): Promise<string | null> {
     try {
-      const decoded = await this.jwtService.verifyAsync(token, {
+      const decoded = await this.jwtService.verifyAsync<{
+        sub?: string;
+        userId?: string;
+        id?: string;
+      }>(token, {
         secret: process.env.JWT_SECRET,
       });
 
       const userId = decoded?.sub || decoded?.userId || decoded?.id;
 
-      if (!userId) {
+      if (!userId || typeof userId !== 'string') {
         this.logger.warn('Token valid but no user ID found in payload');
         return null;
       }

@@ -1,4 +1,9 @@
-import { CanActivate, ExecutionContext, Injectable, Logger } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import { WsException } from '@nestjs/websockets';
 
 @Injectable()
@@ -7,7 +12,7 @@ export class WsAuthGuard implements CanActivate {
 
   canActivate(context: ExecutionContext): boolean {
     try {
-      const client = context.switchToWs().getClient();
+      const client = context.switchToWs().getClient<{ userId?: string }>();
       const userId = client.userId;
 
       if (!userId) {

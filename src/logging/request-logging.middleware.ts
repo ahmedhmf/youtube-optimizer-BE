@@ -6,16 +6,20 @@ import { StructuredLoggerService } from './structured-logger.service';
 export class RequestLoggingMiddleware implements NestMiddleware {
   constructor(private readonly logger: StructuredLoggerService) {}
 
-  use(req: Request, res: Response, next: NextFunction) {
-    const correlationId = (req as any).correlationId;
+  use(
+    req: Request & { correlationId?: string; user?: { id?: string } },
+    res: Response,
+    next: NextFunction,
+  ) {
+    const correlationId = req.correlationId;
     const startTime = Date.now();
 
     // Log incoming request
     this.logger.logRequest(
-      correlationId,
+      correlationId ?? '',
       req.method,
       req.url,
-      (req as any).user?.id,
+      req.user?.id,
       {
         ip: req.ip,
         userAgent: req.get('user-agent'),
@@ -26,12 +30,12 @@ export class RequestLoggingMiddleware implements NestMiddleware {
     res.on('finish', () => {
       const duration = Date.now() - startTime;
       this.logger.logResponse(
-        correlationId,
+        correlationId ?? '',
         req.method,
         req.url,
         res.statusCode,
         duration,
-        (req as any).user?.id,
+        req.user?.id,
       );
     });
 

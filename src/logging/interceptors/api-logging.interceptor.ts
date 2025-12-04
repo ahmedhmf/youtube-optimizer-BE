@@ -1,7 +1,7 @@
 // src/logging/interceptors/api-logging.interceptor.ts
 /**
  * API Logging Interceptor
- * 
+ *
  * NOTE: This interceptor logs ALL requests, but ApiLogService now uses
  * selective logging to Supabase (only critical events: errors, rate limits, auth failures).
  * All requests are still logged to Winston files for debugging.

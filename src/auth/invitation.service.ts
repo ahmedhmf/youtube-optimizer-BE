@@ -59,7 +59,7 @@ export class InvitationService {
         metadata: dto.metadata || {},
       })
       .select()
-      .single();
+      .single<Invitation>();
 
     if (error) {
       this.logger.error(`Failed to create invitation: ${error.message}`);
@@ -67,7 +67,7 @@ export class InvitationService {
     }
 
     this.logger.log(`Created invitation: ${code} for ${dto.email || 'anyone'}`);
-    return data as Invitation;
+    return data;
   }
 
   /**
@@ -81,13 +81,13 @@ export class InvitationService {
       .from('invitations')
       .select('*')
       .eq('code', dto.code)
-      .single();
+      .single<Invitation>();
 
     if (error || !invitation) {
       return { valid: false, reason: 'Invalid invitation code' };
     }
 
-    const invData = invitation as Invitation;
+    const invData = invitation;
 
     // Check if expired
     if (invData.expires_at && new Date(invData.expires_at) < new Date()) {
@@ -103,7 +103,8 @@ export class InvitationService {
     if (invData.email && dto.email && invData.email !== dto.email) {
       return {
         valid: false,
-        reason: 'This invitation code is restricted to a different email address',
+        reason:
+          'This invitation code is restricted to a different email address',
       };
     }
 
@@ -124,13 +125,13 @@ export class InvitationService {
       .from('invitations')
       .select('current_uses')
       .eq('id', invitationId)
-      .single();
+      .single<{ current_uses: number }>();
 
     // Increment current_uses
     const { error: updateError } = await client
       .from('invitations')
       .update({
-        current_uses: (currentInv as any)?.current_uses + 1 || 1,
+        current_uses: (currentInv?.current_uses ?? 0) + 1,
         updated_at: new Date().toISOString(),
       })
       .eq('id', invitationId);
@@ -142,12 +143,10 @@ export class InvitationService {
     }
 
     // Record usage
-    const { error: usageError } = await client
-      .from('invitation_usage')
-      .insert({
-        invitation_id: invitationId,
-        user_id: userId,
-      });
+    const { error: usageError } = await client.from('invitation_usage').insert({
+      invitation_id: invitationId,
+      user_id: userId,
+    });
 
     if (usageError) {
       this.logger.error(
@@ -203,9 +202,7 @@ export class InvitationService {
     totalUses: number;
   }> {
     const client = this.supabaseService.getServiceClient();
-    const { data: invitations } = await client
-      .from('invitations')
-      .select('*');
+    const { data: invitations } = await client.from('invitations').select('*');
 
     if (!invitations) {
       return { total: 0, active: 0, expired: 0, fullyUsed: 0, totalUses: 0 };

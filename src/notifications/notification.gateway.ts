@@ -45,11 +45,13 @@ export class NotificationGateway
   async handleConnection(client: AuthenticatedSocket) {
     try {
       // Extract token from handshake
+      const authToken = client.handshake.auth?.token as string | undefined;
+      const authHeader = client.handshake.headers?.authorization;
       const token =
-        client.handshake.auth?.token ||
-        client.handshake.headers?.authorization?.split(' ')[1];
+        authToken ||
+        (typeof authHeader === 'string' ? authHeader.split(' ')[1] : undefined);
 
-      if (!token) {
+      if (!token || typeof token !== 'string') {
         this.logger.warn(`Connection rejected: No token provided`);
         client.disconnect();
         return;
@@ -253,21 +255,28 @@ export class NotificationGateway
   private async verifyToken(token: string): Promise<string | null> {
     try {
       // ✅ Proper JWT signature verification
-      const decoded = await this.jwtService.verifyAsync(token, {
+      const decoded = await this.jwtService.verifyAsync<{
+        sub?: string;
+        userId?: string;
+        id?: string;
+      }>(token, {
         secret: process.env.JWT_SECRET,
       });
 
       // Extract user ID from token payload
       const userId = decoded?.sub || decoded?.userId || decoded?.id;
 
-      if (!userId) {
+      if (!userId || typeof userId !== 'string') {
         this.logger.warn('Token valid but no user ID found in payload');
         return null;
       }
 
       return userId;
     } catch (error) {
-      this.logger.error('Token verification failed:', error.message);
+      this.logger.error(
+        'Token verification failed:',
+        error instanceof Error ? error.message : String(error),
+      );
       return null;
     }
   }

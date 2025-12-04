@@ -28,6 +28,7 @@ import { AnalyzeVideoResponseDto } from '../DTO/analyze-video-response.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import * as fs from 'fs';
 import * as path from 'path';
+import type { AuthenticatedRequest } from 'src/audit/models/authenticated-request.model';
 
 @ApiTags('AI Video Analysis')
 @Controller('ai')
@@ -58,7 +59,7 @@ export class AiController {
     description: 'Invalid YouTube URL',
   })
   async analyzeVideoByUrl(
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
     @Body() dto: AnalyzeVideoByUrlDto,
     @Query('languageOverride') languageOverride?: string,
     @Query('toneOverride') toneOverride?: string,
@@ -174,7 +175,7 @@ export class AiController {
     description: 'Invalid transcript text',
   })
   async analyzeVideoByText(
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
     @Body() dto: AnalyzeVideoByTextDto,
     @Query('languageOverride') languageOverride?: string,
     @Query('toneOverride') toneOverride?: string,
@@ -245,7 +246,7 @@ export class AiController {
     description: 'Invalid file or file type',
   })
   async analyzeVideoByFile(
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
     @UploadedFile() file: Express.Multer.File,
     @Body() dto: AnalyzeVideoByFileDto,
   ): Promise<AnalyzeVideoResponseDto> {

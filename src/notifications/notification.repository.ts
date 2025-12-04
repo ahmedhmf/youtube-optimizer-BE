@@ -6,8 +6,10 @@ import {
   NotificationFilters,
   NotificationStats,
   NotificationType,
-  NotificationSeverity,
+  DBNotification,
 } from './models/notification.types';
+
+import { NotificationSeverity } from './models/notification.types';
 
 @Injectable()
 export class NotificationRepository {
@@ -26,11 +28,13 @@ export class NotificationRepository {
       const client = this.supabase.getServiceClient();
 
       // Debug log to verify DTO structure
-      this.logger.debug(`Creating notification with DTO: ${JSON.stringify({
-        userId: dto.userId,
-        type: dto.type,
-        severity: dto.severity,
-      })}`);
+      this.logger.debug(
+        `Creating notification with DTO: ${JSON.stringify({
+          userId: dto.userId,
+          type: dto.type,
+          severity: dto.severity,
+        })}`,
+      );
 
       const { data, error } = await client
         .from('notifications')
@@ -39,18 +43,22 @@ export class NotificationRepository {
           title: dto.title,
           message: dto.message,
           type: dto.type,
-          severity: dto.severity || 'info',
+          severity: dto.severity || NotificationSeverity.INFO,
           action_url: dto.actionUrl,
           action_button_text: dto.actionButtonText,
           callback: dto.callback,
           metadata: dto.metadata || {},
         })
         .select()
-        .single();
+        .single<DBNotification>();
 
-      if (error) {
+      if (error || !data) {
         this.logger.error('Failed to create notification', error);
-        throw new Error(error.message);
+        throw new Error(
+          error instanceof Error
+            ? error.message
+            : 'Failed to create notification',
+        );
       }
 
       return this.mapToNotification(data);
@@ -87,7 +95,7 @@ export class NotificationRepository {
 
       query = query.range(offset, offset + limit - 1);
 
-      const { data, error, count } = await query;
+      const { data, error, count } = await query.returns<DBNotification[]>();
 
       if (error) {
         this.logger.error('Failed to fetch notifications', error);
@@ -95,7 +103,7 @@ export class NotificationRepository {
       }
 
       return {
-        notifications: (data || []).map(this.mapToNotification),
+        notifications: (data || []).map((item) => this.mapToNotification(item)),
         total: count || 0,
       };
     } catch (error) {
@@ -147,10 +155,7 @@ export class NotificationRepository {
           .select('*', { count: 'exact', head: true })
           .eq('user_id', userId)
           .eq('read', false),
-        client
-          .from('notifications')
-          .select('type')
-          .eq('user_id', userId),
+        client.from('notifications').select('type').eq('user_id', userId),
       ]);
 
       // Count by type
@@ -160,12 +165,13 @@ export class NotificationRepository {
       });
 
       if (byTypeResult.data) {
-        byTypeResult.data.forEach((item: any) => {
-          if (item.type) {
-            byType[item.type as NotificationType] =
-              (byType[item.type as NotificationType] || 0) + 1;
-          }
-        });
+        byTypeResult.data.forEach(
+          (item: { type?: NotificationType; count?: number }) => {
+            if (item.type) {
+              byType[item.type] = (byType[item.type] || 0) + 1;
+            }
+          },
+        );
       }
 
       return {
@@ -186,10 +192,7 @@ export class NotificationRepository {
   /**
    * Mark notification as read
    */
-  async markAsRead(
-    userId: string,
-    notificationId: string,
-  ): Promise<boolean> {
+  async markAsRead(userId: string, notificationId: string): Promise<boolean> {
     try {
       const client = this.supabase.getClient();
 
@@ -323,20 +326,20 @@ export class NotificationRepository {
   /**
    * Map database row to Notification object
    */
-  private mapToNotification(data: any): Notification {
+  private mapToNotification(data: DBNotification): Notification {
     return {
       id: data.id,
       userId: data.user_id,
       title: data.title,
       message: data.message,
-      type: data.type as NotificationType,
+      type: data.type,
       severity: data.severity,
-      actionUrl: data.action_url,
-      actionButtonText: data.action_button_text,
-      callback: data.callback,
+      actionUrl: data.action_url ?? undefined,
+      actionButtonText: data.action_button_text ?? undefined,
+      callback: data.callback ?? undefined,
       read: data.read,
       createdAt: new Date(data.created_at),
-      metadata: data.metadata || {},
+      metadata: data.metadata,
     };
   }
 }

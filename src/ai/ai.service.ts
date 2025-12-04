@@ -8,6 +8,7 @@ import type {
   ChaptersResult,
   ThumbnailIdeaResult,
   VideoAnalysisResult,
+  ThumbnailGenerationResult,
 } from './models/ai.types';
 import * as fs from 'node:fs';
 import { PromptsService } from './prompts.service';
@@ -15,7 +16,10 @@ import { SystemLogService } from '../logging/services/system-log.service';
 import { LogSeverity, SystemLogCategory } from '../logging/dto/log.types';
 import { UserPreferencesService } from '../user-preferences/user-preferences.service';
 import { NotificationService } from '../notifications/notification.service';
-import { NotificationType, NotificationSeverity } from '../notifications/models/notification.types';
+import {
+  NotificationType,
+  NotificationSeverity,
+} from '../notifications/models/notification.types';
 
 @Injectable()
 export class AiService {
@@ -152,13 +156,14 @@ export class AiService {
     const startTime = Date.now();
     try {
       // Fetch user preferences
-      const preferences = await this.userPreferencesService.getPreferences(userId);
-      
+      const preferences =
+        await this.userPreferencesService.getPreferences(userId);
+
       // Apply fallback chain: override params → saved preferences → defaults
       const language = languageOverride ?? preferences?.language ?? 'en';
       const tone = toneOverride ?? preferences?.tone ?? 'professional';
       const customInstructions = preferences?.customInstructions;
-      
+
       // Send notification if using defaults due to missing preferences
       if (!preferences?.isCompleted && !languageOverride && !toneOverride) {
         await this.notificationService.sendNotification(
@@ -189,7 +194,7 @@ export class AiService {
 
       const text = res.choices[0].message?.content ?? '{}';
       this.logger.log(`Title rewrite AI response: ${text.substring(0, 500)}`);
-      
+
       const parsed = this.parseAIResponse<TitleRewriteResult>(text);
       this.logger.log(`Parsed titles count: ${parsed.titles?.length ?? 0}`);
 
@@ -244,13 +249,14 @@ export class AiService {
     const startTime = Date.now();
     try {
       // Fetch user preferences
-      const preferences = await this.userPreferencesService.getPreferences(userId);
-      
+      const preferences =
+        await this.userPreferencesService.getPreferences(userId);
+
       // Apply fallback chain: override param → saved preference → default
       const language = languageOverride ?? preferences?.language ?? 'en';
       const tone = preferences?.tone;
       const customInstructions = preferences?.customInstructions;
-      
+
       // Send notification if using defaults due to missing preferences
       if (!preferences?.isCompleted && !languageOverride) {
         await this.notificationService.sendNotification(
@@ -281,7 +287,9 @@ export class AiService {
       const text = res.choices[0].message?.content ?? '{}';
       const jsonStart = text.indexOf('{');
       const jsonEnd = text.lastIndexOf('}');
-      const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
+      const parsed = JSON.parse(
+        text.slice(jsonStart, jsonEnd + 1),
+      ) as DescriptionRewriteResult;
 
       const responseTime = Date.now() - startTime;
       await this.systemLogService.logSystem({
@@ -340,7 +348,9 @@ export class AiService {
       const text = res.choices[0].message?.content ?? '{}';
       const jsonStart = text.indexOf('{');
       const jsonEnd = text.lastIndexOf('}');
-      const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
+      const parsed = JSON.parse(
+        text.slice(jsonStart, jsonEnd + 1),
+      ) as KeywordExtractionResult;
 
       const responseTime = Date.now() - startTime;
       await this.systemLogService.logSystem({
@@ -400,7 +410,9 @@ export class AiService {
       const text = res.choices[0].message?.content ?? '{}';
       const jsonStart = text.indexOf('{');
       const jsonEnd = text.lastIndexOf('}');
-      const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
+      const parsed = JSON.parse(
+        text.slice(jsonStart, jsonEnd + 1),
+      ) as ChaptersResult;
 
       const responseTime = Date.now() - startTime;
       await this.systemLogService.logSystem({
@@ -452,12 +464,14 @@ export class AiService {
     const startTime = Date.now();
     try {
       // Fetch user preferences
-      const preferences = await this.userPreferencesService.getPreferences(userId);
-      
+      const preferences =
+        await this.userPreferencesService.getPreferences(userId);
+
       // Apply fallback chain: override param → saved preference → undefined (no default)
-      const thumbnailStyle = thumbnailStyleOverride ?? preferences?.thumbnailStyle;
+      const thumbnailStyle =
+        thumbnailStyleOverride ?? preferences?.thumbnailStyle;
       const customInstructions = preferences?.customInstructions;
-      
+
       // Send notification if using no style due to missing preferences
       if (!preferences?.isCompleted && !thumbnailStyleOverride) {
         await this.notificationService.sendNotification(
@@ -487,7 +501,9 @@ export class AiService {
       const text = res.choices[0].message?.content ?? '{}';
       const jsonStart = text.indexOf('{');
       const jsonEnd = text.lastIndexOf('}');
-      const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
+      const parsed = JSON.parse(
+        text.slice(jsonStart, jsonEnd + 1),
+      ) as ThumbnailGenerationResult;
 
       const responseTime = Date.now() - startTime;
       await this.systemLogService.logSystem({
@@ -536,12 +552,13 @@ export class AiService {
     const startTime = Date.now();
     try {
       // Fetch user preferences
-      const preferences = await this.userPreferencesService.getPreferences(userId);
-      
+      const preferences =
+        await this.userPreferencesService.getPreferences(userId);
+
       // Apply fallback chain: override param → saved preference → undefined (no default)
       const imageStyle = imageStyleOverride ?? preferences?.imageStyle;
       const customInstructions = preferences?.customInstructions;
-      
+
       // Send notification if using no style due to missing preferences
       if (!preferences?.isCompleted && !imageStyleOverride) {
         await this.notificationService.sendNotification(
@@ -571,7 +588,9 @@ export class AiService {
       const text = res.choices[0].message?.content ?? '{}';
       const jsonStart = text.indexOf('{');
       const jsonEnd = text.lastIndexOf('}');
-      const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
+      const parsed = JSON.parse(
+        text.slice(jsonStart, jsonEnd + 1),
+      ) as ThumbnailGenerationResult;
 
       const responseTime = Date.now() - startTime;
       await this.systemLogService.logSystem({
@@ -679,79 +698,79 @@ export class AiService {
     }
   }
 
-  /**
-   * Alternative: Master Analysis with Single API Call
-   * More cost-efficient but less granular control
-   */
-  async analyzeVideoCompleteSingleCall(
-    transcript: string,
-  ): Promise<VideoAnalysisResult> {
-    const startTime = Date.now();
-    try {
-      const prompt = PromptsService.getMasterAnalysisPrompt(transcript);
+  // /**
+  //  * Alternative: Master Analysis with Single API Call
+  //  * More cost-efficient but less granular control
+  //  */
+  // async analyzeVideoCompleteSingleCall(
+  //   transcript: string,
+  // ): Promise<VideoAnalysisResult> {
+  //   const startTime = Date.now();
+  //   try {
+  //     const prompt = PromptsService.getMasterAnalysisPrompt(transcript);
 
-      const res = await this.openai.chat.completions.create({
-        model: 'gpt-4o-mini',
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.7,
-      });
+  //     const res = await this.openai.chat.completions.create({
+  //       model: 'gpt-4o-mini',
+  //       messages: [{ role: 'user', content: prompt }],
+  //       temperature: 0.7,
+  //     });
 
-      const text = res.choices[0].message?.content ?? '{}';
-      const jsonStart = text.indexOf('{');
-      const jsonEnd = text.lastIndexOf('}');
-      const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
+  //     const text = res.choices[0].message?.content ?? '{}';
+  //     const jsonStart = text.indexOf('{');
+  //     const jsonEnd = text.lastIndexOf('}');
+  //     const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
 
-      const responseTime = Date.now() - startTime;
-      await this.systemLogService.logSystem({
-        logLevel: LogSeverity.INFO,
-        category: SystemLogCategory.NETWORK,
-        serviceName: 'AiService',
-        message: 'OpenAI API call successful - analyzeVideoCompleteSingleCall',
-        details: {
-          model: 'gpt-4o-mini',
-          transcriptLength: transcript.length,
-          promptTokens: res.usage?.prompt_tokens,
-          completionTokens: res.usage?.completion_tokens,
-          totalTokens: res.usage?.total_tokens,
-          responseTimeMs: responseTime,
-        },
-      });
+  //     const responseTime = Date.now() - startTime;
+  //     await this.systemLogService.logSystem({
+  //       logLevel: LogSeverity.INFO,
+  //       category: SystemLogCategory.NETWORK,
+  //       serviceName: 'AiService',
+  //       message: 'OpenAI API call successful - analyzeVideoCompleteSingleCall',
+  //       details: {
+  //         model: 'gpt-4o-mini',
+  //         transcriptLength: transcript.length,
+  //         promptTokens: res.usage?.prompt_tokens,
+  //         completionTokens: res.usage?.completion_tokens,
+  //         totalTokens: res.usage?.total_tokens,
+  //         responseTimeMs: responseTime,
+  //       },
+  //     });
 
-      return {
-        // titleRewrite: parsed.titleRewrite ?? { titles: [] },
-        descriptionRewrite: parsed.descriptionRewrite ?? {
-          description: '',
-          hashtags: [],
-          keyPoints: [],
-        },
-        keywordExtraction: parsed.keywordExtraction ?? {
-          primaryKeywords: [],
-          longTailKeywords: [],
-          trendingKeywords: [],
-          competitorKeywords: [],
-        },
-        chapters: parsed.chapters ?? { chapters: [] },
-        thumbnailGeneration: parsed.thumbnailGeneration ?? {
-          ideas: [],
-          aiPrompts: [],
-        },
-      };
-    } catch (error) {
-      const responseTime = Date.now() - startTime;
-      await this.systemLogService.logSystem({
-        logLevel: LogSeverity.ERROR,
-        category: SystemLogCategory.NETWORK,
-        serviceName: 'AiService',
-        message: 'OpenAI API call failed - analyzeVideoCompleteSingleCall',
-        details: {
-          model: 'gpt-4o-mini',
-          transcriptLength: transcript.length,
-          responseTimeMs: responseTime,
-          error: error instanceof Error ? error.message : String(error),
-        },
-        stackTrace: error instanceof Error ? error.stack : undefined,
-      });
-      throw error;
-    }
-  }
+  //     return {
+  //       // titleRewrite: parsed.titleRewrite ?? { titles: [] },
+  //       descriptionRewrite: parsed.descriptionRewrite ?? {
+  //         description: '',
+  //         hashtags: [],
+  //         keyPoints: [],
+  //       },
+  //       keywordExtraction: parsed.keywordExtraction ?? {
+  //         primaryKeywords: [],
+  //         longTailKeywords: [],
+  //         trendingKeywords: [],
+  //         competitorKeywords: [],
+  //       },
+  //       chapters: parsed.chapters ?? { chapters: [] },
+  //       thumbnailGeneration: parsed.thumbnailGeneration ?? {
+  //         ideas: [],
+  //         aiPrompts: [],
+  //       },
+  //     };
+  //   } catch (error) {
+  //     const responseTime = Date.now() - startTime;
+  //     await this.systemLogService.logSystem({
+  //       logLevel: LogSeverity.ERROR,
+  //       category: SystemLogCategory.NETWORK,
+  //       serviceName: 'AiService',
+  //       message: 'OpenAI API call failed - analyzeVideoCompleteSingleCall',
+  //       details: {
+  //         model: 'gpt-4o-mini',
+  //         transcriptLength: transcript.length,
+  //         responseTimeMs: responseTime,
+  //         error: error instanceof Error ? error.message : String(error),
+  //       },
+  //       stackTrace: error instanceof Error ? error.stack : undefined,
+  //     });
+  //     throw error;
+  //   }
+  // }
 }

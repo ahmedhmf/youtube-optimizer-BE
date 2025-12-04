@@ -31,7 +31,7 @@ export class UserLogService {
       'two_factor_disabled',
     ];
 
-    const isCritical = 
+    const isCritical =
       criticalActivityTypes.includes(data.activityType) ||
       data.severity === LogSeverity.ERROR ||
       data.severity === LogSeverity.CRITICAL ||
