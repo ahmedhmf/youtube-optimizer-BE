@@ -1001,7 +1001,13 @@ export class DatabaseQueueService implements OnModuleInit {
     try {
       [thumbnailIdeas, thumbnailAIPrompts] = await Promise.all([
         this.aiService.generateThumbnailIdeas(userId, transcript),
-        this.aiService.generateThumbnailAIPrompts(userId, transcript),
+        this.aiService.generateThumbnailAIPrompts(
+          userId,
+          transcript,
+          undefined,
+          video.thumbnail,
+          video.title, // Pass video title for better context
+        ),
       ]);
 
       // Generate actual thumbnail image using the first AI prompt
@@ -1018,6 +1024,8 @@ export class DatabaseQueueService implements OnModuleInit {
             userId,
             thumbnailAIPrompts[0],
             video.id,
+            video.title, // Pass video title for text overlay
+            transcript, // Pass transcript for style detection
           );
           this.logger.log(
             `Thumbnail generated successfully for job ${jobId}: ${thumbnailUrl}`,

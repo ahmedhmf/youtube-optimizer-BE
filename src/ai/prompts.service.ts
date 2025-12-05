@@ -313,22 +313,24 @@ Generate exactly 5 diverse thumbnail ideas.`;
   }
 
   /**
-   * 6. AI Image Generation Prompts for Thumbnails
-   * Creates detailed prompts for AI image generators (DALL-E, Midjourney, etc.)
+   * 6. AI Image Generation Prompts for Thumbnails (NEW - 1280x720 Background Only)
+   * Creates prompts for DALL-E 3 to generate background images for thumbnails
+   * Text overlays will be added programmatically by Sharp.js
    */
   public static getThumbnailAIPrompt(
     transcript: string,
-    imageStyle?: string,
+    templateStyle: string,
+    videoTitle?: string,
     customInstructions?: string,
   ): string {
-    const styleInstruction = imageStyle
-      ? `\n\nIMAGE STYLE REQUIREMENT: All AI prompts must use ${imageStyle} style. Include this style specification in every prompt you generate (e.g., "photorealistic", "illustration", "3D render", "anime style", "watercolor", etc.).`
-      : '';
-    const customSection = customInstructions
-      ? `\n\nCUSTOM INSTRUCTIONS FROM USER:\n${customInstructions}\nPlease incorporate these preferences into your AI image prompts.`
-      : '';
+    // Legacy function - kept for compatibility
+    const titleInfo = videoTitle ? `Video: ${videoTitle}` : '';
 
-    return `You are an AI image prompt engineer specializing in creating detailed prompts for YouTube thumbnail generation.${styleInstruction}${customSection}
+    return `Professional YouTube thumbnail background. ${titleInfo}
+
+Context: ${transcript.slice(0, 1500)}${customInstructions ? `\n${customInstructions}` : ''}
+
+NO text in image. High contrast, bold colors, photorealistic.
 
 ANALYZE THIS VIDEO TRANSCRIPT:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -336,6 +338,26 @@ ${transcript.slice(0, 3000)}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 YOUR TASK: Create ONE perfect, highly detailed AI image generation prompt optimized for YouTube thumbnail creation.
+
+CRITICAL ANALYSIS STEPS:
+1. Identify the SPECIFIC topic, niche, and main subject of this video
+2. Extract key visual elements mentioned or implied (people, objects, settings, tools, technology)
+3. Determine the video's tone and target audience
+4. Identify any specific brands, products, locations, or recognizable elements mentioned
+5. Note any emotions, reactions, or dramatic moments described
+6. Consider the video category (tech review, tutorial, vlog, gaming, education, etc.)
+
+CUSTOMIZATION REQUIREMENTS:
+• Base the thumbnail DIRECTLY on specific details from THIS video
+• If the video mentions specific products/tools/technology, include them visually
+• If it's a tutorial, show the specific skill/task being taught
+• If it's a review, feature the actual product being reviewed
+• If people are discussed, describe their appearance, clothing, expressions based on context
+• Match the thumbnail style to the video's niche (tech = futuristic/modern, cooking = warm/appetizing, fitness = energetic/dynamic)
+• Include relevant props, tools, or environment specific to this video's content
+• For TRANSFORMATION/BEFORE-AFTER content: Show clear split composition with visible contrast between states
+• For CHALLENGE/EXTREME content: Show intense action moment with dramatic background element representing the challenge, person centered with shocked/determined expression
+• For CONTRADICTION/MIND-BLOWING content: Show surprising juxtaposition or unexpected elements, person with shocked/confused expression, visual that creates curiosity and makes viewer question their assumptions
 
 PROMPT STRUCTURE REQUIREMENTS:
 1. Subject/Main Focus (person, object, scene from the video content)
@@ -349,32 +371,57 @@ PROMPT STRUCTURE REQUIREMENTS:
 9. Technical Quality (ultra detailed, sharp, professional)
 
 PROMPT BEST PRACTICES:
-• Be extremely specific and detailed (200+ words)
-• Use vivid, descriptive adjectives
-• Specify technical quality (ultra detailed, 8K, photorealistic, sharp focus)
-• Include professional references (cinematic lighting, studio photography)
-• Leave clear space for text overlay (typically top or side)
-• Optimize for 16:9 aspect ratio and mobile visibility
-• Focus on ONE clear, impactful subject or scene
-• Use bold colors and high contrast
-• Create depth and dimension
+• Be extremely specific and detailed (250+ words minimum)
+• Use vivid, descriptive adjectives for every element
+• Specify exact colors (don't say "blue" - say "electric blue" or "navy blue")
+• Include precise lighting details (rim lighting, key light position, fill light, etc.)
+• Describe exact camera angles and framing (close-up, medium shot, overhead, eye-level)
+• Specify materials and textures (glossy, matte, metallic, fabric type)
+• Include professional photography terms (bokeh, depth of field, golden hour lighting)
+• Leave strategic empty space for text overlay (specify location: top third, bottom third, left/right side)
+• Optimize for tiny mobile screens - bold, simple, high contrast
+• Focus on ONE hero element that's instantly recognizable
+• Use complementary colors that pop (orange/teal, red/green, yellow/purple)
+• Create visual hierarchy with size and positioning
+• Add subtle depth with foreground/background separation
+• Make expressions and gestures exaggerated and clear
+• Ensure the image tells a story at a glance
+• Composition should allow for text without obscuring key elements
 
 CRITICAL REQUIREMENTS:
 • DO NOT include play buttons, YouTube logos, or video player UI elements
-• DO NOT add text overlays in the generated image (text will be added in post-production)
+• DO NOT add text or words - this is a background image only (text will be added programmatically)
 • Focus on the actual content/subject matter from the video
 • Create a standalone image that works as a thumbnail background
 • Make it eye-catching and scroll-stopping
+• Leave strategic space for text overlay (typically top or bottom third)
 
-EXAMPLE PROMPT:
-"Photorealistic close-up portrait of excited young programmer with wide eyes and amazed expression, mouth slightly open in shock, pointing finger directly at glowing laptop screen showing colorful code, dramatic side lighting with vibrant orange and electric blue color grading creating strong contrast, dark moody background with subtle floating tech icons and circuit patterns, cinematic composition with subject positioned on left third of frame leaving generous space for bold text overlay at top right, professional studio photography quality with dramatic rim lighting highlighting hair and shoulders, ultra detailed facial features, 8K resolution, sharp focus on eyes, high contrast optimized for mobile viewing, bokeh effect on background elements, warm skin tones contrasting with cool tech elements, dynamic diagonal composition, no play buttons, no text, no UI elements, clean professional thumbnail background ready for text addition"
+EXAMPLES BY VIDEO TYPE:
+
+Tech Tutorial:
+"Ultra detailed photorealistic scene showing hands typing on mechanical keyboard with specific code editor (VS Code) visible on screen displaying Python code, glowing syntax highlighting in purple and cyan, MacBook Pro laptop with recognizable design, dramatic overhead lighting with blue and orange rim lights, dark wooden desk with specific tech accessories (wireless mouse, coffee mug, smartphone), modern minimalist home office background slightly blurred, 16:9 composition with code editor on left two-thirds leaving clean space for text overlay at top, professional commercial photography style, 8K detail, sharp focus on keyboard and screen, high contrast, no text, no UI elements"
+
+Cooking Video:
+"Photorealistic overhead shot of chef's hands sprinkling fresh basil over steaming homemade margherita pizza on rustic wooden cutting board, melted mozzarella cheese stretching, bright red tomato sauce visible, professional kitchen countertop with scattered ingredients (cherry tomatoes, basil leaves, olive oil bottle), warm golden lighting from side creating appetizing glow, shallow depth of field with blurred kitchen background, 16:9 composition with pizza centered leaving clear space at top for text overlay, commercial food photography style, ultra detailed texture on pizza crust, 8K resolution, high saturation colors, no text, no UI elements"
+
+Product Review:
+"Photorealistic shot of hands holding and examining the specific product (e.g., iPhone 15 Pro in titanium blue), visible product details and features, dramatic studio lighting with gradient background transitioning from deep blue to black, product reflection on glossy surface below, lens flare effect from side, professional commercial product photography, person's face partially visible in background showing impressed expression, 16:9 composition with product on left third, generous clean space on right for text overlay, ultra sharp focus on product, 8K detail, high contrast, bokeh background, no text, no UI elements"
+
+Before & After / Transformation:
+"Split composition showing dramatic transformation, left side showing 'before' state (dull, unimpressive, problematic), right side showing 'after' state (vibrant, impressive, solved), clear visual divide down the middle with subtle gradient or line, same person or subject in both sides for comparison, dramatic lighting difference between sides (darker on left, brighter on right), professional photography, clear facial expressions showing contrast (frustrated/uncertain on left, confident/happy on right), 16:9 composition with clean space at center top or bottom for text overlay spanning both sides, high contrast, no text, no UI elements, emphasis on the transformation journey"
+
+Challenge / Extreme:
+"Photorealistic dramatic action shot showing intense moment of challenge or danger, wide-eyed person in center frame with shocked or determined expression, dramatic background element showing the challenge (e.g., shark fin visible in water behind diver, cliff edge with extreme height visible, wild animal in background, massive wave approaching), high-energy composition with person positioned in middle third, dramatic lighting with rim lights creating separation from background, motion blur or dynamic elements suggesting action and intensity, vibrant colors with high saturation, person wearing appropriate gear for challenge (diving suit, climbing gear, protective equipment), 16:9 composition with clear space at top for bold text overlay, ultra high contrast, professional action photography style, no text, no UI elements, eye-catching and scroll-stopping impact"
+
+Contradiction / Mind-Blowing:
+"Photorealistic scene showing surprising juxtaposition or unexpected contradiction, person in center with shocked, confused, or amazed facial expression (wide eyes, open mouth, raised eyebrows), hand gestures pointing or indicating disbelief (pointing at something, hand on head, confused gesture), background showing two contrasting or contradictory elements side by side or one unexpected element that challenges expectations, dramatic lighting highlighting the contradiction, bright colors with high contrast, professional photography style with clean composition, person positioned in center or slightly off-center, 16:9 composition with clear space at top for provocative text overlay, elements that make viewer question what they see, visual that creates curiosity gap, no text, no UI elements, emphasis on creating 'wait, what?' reaction"
 
 RETURN FORMAT (JSON only):
 {
-  "aiPrompt": "Your single, detailed prompt here (200+ words)..."
+  "aiPrompt": "Your single, detailed, video-specific prompt here (250+ words)..."
 }
 
-Generate ONE perfect, comprehensive prompt ready for DALL-E 3.`;
+Generate ONE perfect, comprehensive prompt that is SPECIFICALLY tailored to THIS video's unique content, not a generic thumbnail.`;
   }
 
   /**

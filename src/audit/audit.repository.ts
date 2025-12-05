@@ -17,7 +17,8 @@ export class AuditRepository {
     url: string,
     data: AuditResponse,
   ): Promise<DBAuditResultModel['data']> {
-    const client = this.supabase.getClient();
+    // Use service client to bypass RLS policies for background job operations
+    const client = this.supabase.getServiceClient();
     const { video, analysis } = data;
 
     // Save to new enhanced analysis columns (jsonb format)
@@ -62,7 +63,8 @@ export class AuditRepository {
   async countUserAudits(userId: string): Promise<number> {
     try {
       this.logger.log(`Counting audits for user: ${userId}`);
-      const client = this.supabase.getClient();
+      // Use service client for background job operations
+      const client = this.supabase.getServiceClient();
       const { count, error } = await client
         .from('audits')
         .select('*', { count: 'exact' })
@@ -202,7 +204,8 @@ export class AuditRepository {
     thumbnailUrl: string,
   ): Promise<void> {
     try {
-      const client = this.supabase.getClient();
+      // Use service client for background job operations
+      const client = this.supabase.getServiceClient();
       const { error } = await client
         .from('audits')
         .update({ thumbnail_url: thumbnailUrl })

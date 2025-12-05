@@ -12,6 +12,7 @@ import type {
 } from './models/ai.types';
 import * as fs from 'node:fs';
 import { PromptsService } from './prompts.service';
+import { ThumbnailComposerService } from './thumbnail-composer.service';
 import { SystemLogService } from '../logging/services/system-log.service';
 import { LogSeverity, SystemLogCategory } from '../logging/dto/log.types';
 import { UserPreferencesService } from '../user-preferences/user-preferences.service';
@@ -32,6 +33,7 @@ export class AiService {
     private readonly userPreferencesService: UserPreferencesService,
     private readonly notificationService: NotificationService,
     private readonly supabaseService: SupabaseService,
+    private readonly thumbnailComposerService: ThumbnailComposerService,
   ) {
     this.openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   }
@@ -545,11 +547,14 @@ export class AiService {
 
   /**
    * 6. Thumbnail AI Prompts - Generate single optimized AI image generation prompt
+   * Optionally analyzes existing YouTube thumbnail for better context
    */
   async generateThumbnailAIPrompts(
     userId: string,
     transcript: string,
     imageStyleOverride?: string,
+    existingThumbnailUrl?: string,
+    videoTitle?: string,
   ): Promise<string[]> {
     const startTime = Date.now();
     try {
@@ -575,16 +580,174 @@ export class AiService {
         );
       }
 
+      // If YouTube video URL is provided, extract and analyze video frames
+      let visualContext = '';
+      if (existingThumbnailUrl) {
+        try {
+          // Extract video ID from thumbnail URL or use it directly
+          // YouTube thumbnail URLs are like: https://i.ytimg.com/vi/VIDEO_ID/...
+          const videoIdMatch = existingThumbnailUrl.match(/\/vi\/([^/]+)\//);
+
+          if (videoIdMatch) {
+            const videoId = videoIdMatch[1];
+
+            // Construct URLs for multiple video frames from YouTube
+            // YouTube provides frame images at different timestamps
+            const frameUrls = [
+              `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`, // High quality frame
+              `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`, // Frame 1
+            ];
+
+            // Download images and convert to base64 data URLs
+            const frameDataUrls: string[] = [];
+            for (const url of frameUrls) {
+              try {
+                const response = await fetch(url);
+                if (response.ok) {
+                  const arrayBuffer = await response.arrayBuffer();
+                  const buffer = Buffer.from(arrayBuffer);
+                  const base64 = buffer.toString('base64');
+                  frameDataUrls.push(`data:image/jpeg;base64,${base64}`);
+                }
+              } catch (fetchError) {
+                this.logger.warn(
+                  `Failed to download frame: ${url}`,
+                  fetchError,
+                );
+              }
+            }
+
+            if (frameDataUrls.length === 0) {
+              throw new Error('Could not download any video frames');
+            }
+
+            // Build content array with text and images
+            const contentArray: any[] = [
+              {
+                type: 'text',
+                text: `Analyze these YouTube video frames in detail to help create a thumbnail. Focus on visual elements (DO NOT try to identify specific individuals):
+
+1. SCENE & COMPOSITION:
+   - What type of scene is this? (indoor/outdoor, studio, office, kitchen, etc.)
+   - Camera angle and framing (close-up, wide shot, overhead, etc.)
+   - Subject positioning and composition rules used
+   - Foreground and background elements
+
+2. VISUAL ELEMENTS:
+   - Objects, products, tools, technology visible (be specific: laptop model, phone type, equipment)
+   - Text, graphics, or overlays shown in the frame
+   - Any brands, logos, or recognizable items
+   - Props and accessories
+
+3. PEOPLE (General Description ONLY - no identification):
+   - Number of people visible
+   - General positioning and poses (pointing, gesturing, looking at camera, etc.)
+   - Clothing colors and style (casual, professional, sportswear, etc.)
+   - Body language and energy level (excited, calm, focused, etc.)
+   - If showing hands/actions - what are they doing?
+
+4. COLORS & LIGHTING:
+   - Dominant color palette (specific shades)
+   - Color temperature (warm/cool tones)
+   - Lighting setup (front-lit, side-lit, dramatic shadows, soft lighting)
+   - Contrast levels and saturation
+
+5. STYLE & MOOD:
+   - Video category (tech, gaming, cooking, fitness, education, etc.)
+   - Production quality (professional studio, home setup, casual vlog)
+   - Overall mood and energy (energetic, calm, dramatic, fun)
+   - Visual effects or filters used
+
+Provide detailed descriptions focusing on these visual elements to recreate the style and composition for a new thumbnail.`,
+              },
+            ];
+
+            // Add downloaded frames as base64 data URLs
+            for (const dataUrl of frameDataUrls) {
+              contentArray.push({
+                type: 'image_url',
+                image_url: {
+                  url: dataUrl,
+                  detail: 'high',
+                },
+              });
+            }
+
+            // Analyze frames with GPT-4 Vision
+            const visionResponse = await this.openai.chat.completions.create({
+              model: 'gpt-4o',
+              messages: [
+                {
+                  role: 'user',
+                  content: contentArray,
+                },
+              ],
+              max_tokens: 800,
+            });
+
+            visualContext = visionResponse.choices[0].message?.content ?? '';
+            this.logger.log(
+              `Analyzed video frames for context: ${visualContext.slice(0, 150)}...`,
+            );
+          } else {
+            // Fallback: analyze the thumbnail itself (download and convert to base64)
+            const response = await fetch(existingThumbnailUrl);
+            if (!response.ok) {
+              throw new Error('Could not download thumbnail image');
+            }
+            const arrayBuffer = await response.arrayBuffer();
+            const buffer = Buffer.from(arrayBuffer);
+            const base64 = buffer.toString('base64');
+            const dataUrl = `data:image/jpeg;base64,${base64}`;
+
+            const visionResponse = await this.openai.chat.completions.create({
+              model: 'gpt-4o',
+              messages: [
+                {
+                  role: 'user',
+                  content: [
+                    {
+                      type: 'text',
+                      text: 'Analyze this YouTube thumbnail for visual details to create a similar thumbnail. Focus on: scene composition, objects/products visible, text/graphics, color scheme, lighting setup, camera angle, and overall style. For people: describe poses, clothing colors/style, and actions WITHOUT identifying them. Be extremely specific about visual elements.',
+                    },
+                    {
+                      type: 'image_url',
+                      image_url: {
+                        url: dataUrl,
+                        detail: 'high',
+                      },
+                    },
+                  ],
+                },
+              ],
+              max_tokens: 600,
+            });
+
+            visualContext = visionResponse.choices[0].message?.content ?? '';
+            this.logger.log(
+              `Analyzed thumbnail for context: ${visualContext.slice(0, 150)}...`,
+            );
+          }
+        } catch (visionError) {
+          this.logger.warn(
+            'Failed to analyze video frames/thumbnail, proceeding without visual context',
+            visionError,
+          );
+        }
+      }
+
       const prompt = PromptsService.getThumbnailAIPrompt(
         transcript,
-        imageStyle,
+        imageStyle || 'photorealistic',
+        videoTitle,
         customInstructions,
       );
 
+      // Use GPT-4o (not mini) for better quality prompt generation
       const res = await this.openai.chat.completions.create({
-        model: 'gpt-4o-mini',
+        model: 'gpt-4o',
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.8,
+        temperature: 0.7, // Lower temp for more focused, consistent prompts
       });
 
       const text = res.choices[0].message?.content ?? '{}';
@@ -594,6 +757,13 @@ export class AiService {
         aiPrompt?: string;
       };
 
+      // Log the generated prompt for debugging
+      if (parsed.aiPrompt) {
+        this.logger.log(
+          `Generated DALL-E prompt (${parsed.aiPrompt.length} chars): ${parsed.aiPrompt}`,
+        );
+      }
+
       const responseTime = Date.now() - startTime;
       await this.systemLogService.logSystem({
         logLevel: LogSeverity.INFO,
@@ -601,12 +771,14 @@ export class AiService {
         serviceName: 'AiService',
         message: 'OpenAI API call successful - generateThumbnailAIPrompts',
         details: {
-          model: 'gpt-4o-mini',
+          model: 'gpt-4o',
           transcriptLength: transcript.length,
+          videoTitle: videoTitle,
           promptTokens: res.usage?.prompt_tokens,
           completionTokens: res.usage?.completion_tokens,
           totalTokens: res.usage?.total_tokens,
           responseTimeMs: responseTime,
+          generatedPromptLength: parsed.aiPrompt?.length ?? 0,
         },
       });
 
@@ -620,8 +792,9 @@ export class AiService {
         serviceName: 'AiService',
         message: 'OpenAI API call failed - generateThumbnailAIPrompts',
         details: {
-          model: 'gpt-4o-mini',
+          model: 'gpt-4o',
           transcriptLength: transcript.length,
+          videoTitle: videoTitle,
           responseTimeMs: responseTime,
           error: error instanceof Error ? error.message : String(error),
         },
@@ -632,58 +805,82 @@ export class AiService {
   }
 
   /**
-   * 7. Generate Thumbnail Image - Create actual thumbnail using DALL-E 3
+   * 7. Generate Thumbnail Image - NEW SYSTEM with 10 Templates
+   * Uses DALL-E 3 for background + Sharp.js for text overlays
    */
   async generateThumbnailImage(
     userId: string,
     aiPrompt: string,
     videoId: string,
+    videoTitle?: string,
+    transcript?: string,
   ): Promise<string> {
     const startTime = Date.now();
     try {
-      this.logger.log(`Generating thumbnail image for user ${userId}...`);
+      this.logger.log(`Generating thumbnail for video: ${videoTitle || videoId}`);
 
-      // Generate image using DALL-E 3
-      // Note: DALL-E 3 supports 1024x1024, 1792x1024, or 1024x1792
-      // We'll use 1792x1024 (16:9 landscape) which is closest to 1280x720
+      // Step 1: Generate DALL-E 3 background (1792x1024 HD)
+      const enhancedPrompt = `Professional YouTube thumbnail background image.
 
-      // Enhance prompt to ensure no UI elements or play buttons
-      const enhancedPrompt = `${aiPrompt}. IMPORTANT: This is a YouTube thumbnail background image. Do NOT include any play buttons, video player controls, YouTube logos, or text overlays. Focus only on the visual content and subjects. Create a clean, professional image suitable for adding text overlay later.`;
+${aiPrompt}
+
+CRITICAL: NO text, words, or letters in the image. This is a background only.
+High contrast, bold colors, eye-catching composition, photorealistic style.`;
 
       const response = await this.openai.images.generate({
         model: 'dall-e-3',
         prompt: enhancedPrompt,
         n: 1,
         size: '1792x1024',
-        quality: 'standard',
+        quality: 'hd',
+        style: 'vivid',
         response_format: 'url',
       });
 
       const imageUrl = response.data?.[0]?.url;
       if (!imageUrl) {
-        throw new Error('No image URL returned from OpenAI');
+        throw new Error('No image URL returned from DALL-E');
       }
 
-      this.logger.log(`Image generated successfully: ${imageUrl}`);
-
-      // Download the image
+      // Step 2: Download the background image
       const imageResponse = await fetch(imageUrl);
       if (!imageResponse.ok) {
-        throw new Error(
-          `Failed to download image: ${imageResponse.statusText}`,
-        );
+        throw new Error(`Failed to download image: ${imageResponse.statusText}`);
       }
 
-      const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
+      const backgroundBuffer = Buffer.from(await imageResponse.arrayBuffer());
+
+      // Step 3: Compose with text overlay (if title and transcript provided)
+      let finalBuffer: Buffer;
+
+      if (videoTitle && transcript) {
+        try {
+          // Use new template system
+          finalBuffer = await this.thumbnailComposerService.composeThumbnail(
+            backgroundBuffer,
+            videoTitle,
+            transcript,
+          );
+          this.logger.log('Thumbnail composed with template text overlay');
+        } catch (compositionError) {
+          this.logger.warn(
+            'Failed to compose thumbnail with text, using background only',
+            compositionError,
+          );
+          finalBuffer = backgroundBuffer; // Fallback to background only
+        }
+      } else {
+        finalBuffer = backgroundBuffer; // No title/transcript, use background only
+      }
+
       const fileName = `thumbnails/${userId}/${videoId}_${Date.now()}.png`;
 
       // Upload to Supabase Storage
       const supabase = this.supabaseService.getServiceClient();
 
-      // Ensure bucket exists (you may need to create 'thumbnails' bucket in Supabase Dashboard)
       const { error: uploadError } = await supabase.storage
         .from('thumbnails')
-        .upload(fileName, imageBuffer, {
+        .upload(fileName, finalBuffer, {
           contentType: 'image/png',
           cacheControl: '3600',
           upsert: false,

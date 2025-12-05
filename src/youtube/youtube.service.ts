@@ -154,13 +154,22 @@ export class YoutubeService {
       try {
         const info = await youtube.getBasicInfo(videoId);
         transcriptData = await info.getTranscript();
-      } catch {
+      } catch (basicError) {
         // If getBasicInfo fails, try alternative method
         this.logger.warn(
-          `getBasicInfo failed for ${videoId}, trying alternative method`,
+          `getBasicInfo failed for ${videoId}, trying alternative method: ${basicError instanceof Error ? basicError.message : String(basicError)}`,
         );
-        const info = await youtube.getInfo(videoId);
-        transcriptData = await info.getTranscript();
+        try {
+          const info = await youtube.getInfo(videoId);
+          transcriptData = await info.getTranscript();
+        } catch (infoError: unknown) {
+          this.logger.error(
+            `Both getBasicInfo and getInfo failed for ${videoId}. This is likely due to YouTube API changes or transcript being disabled. Error: ${infoError instanceof Error ? infoError.message : String(infoError)}`,
+          );
+          throw new Error(
+            'Unable to fetch transcript. This video may have transcripts disabled, or YouTube has updated their API. Please try a different video or contact support.',
+          );
+        }
       }
 
       if (!transcriptData) {
@@ -213,8 +222,19 @@ export class YoutubeService {
         stackTrace: error instanceof Error ? error.stack : undefined,
       });
 
+      // Check if it's a parsing error from youtubei.js
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      const isParsingError = errorMessage.includes('ParsingError');
+
+      if (isParsingError) {
+        throw new Error(
+          'Unable to fetch transcript due to YouTube API changes. The video transcript library needs an update. Please try a different video or contact support.',
+        );
+      }
+
       throw new Error(
-        `Failed to fetch transcript: ${error instanceof Error ? error.message : 'Unknown error'}. Transcript may be disabled for this video.`,
+        `Failed to fetch transcript: ${errorMessage}. Transcript may be disabled for this video.`,
       );
     }
   }
