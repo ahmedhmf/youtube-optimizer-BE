@@ -29,6 +29,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { AuthenticatedRequest } from 'src/audit/models/authenticated-request.model';
+import { AuditRepository } from '../audit/audit.repository';
 
 @ApiTags('AI Video Analysis')
 @Controller('ai')
@@ -37,6 +38,7 @@ export class AiController {
   constructor(
     private readonly aiService: AiService,
     private readonly youtubeService: YoutubeService,
+    private readonly auditRepository: AuditRepository,
   ) {}
 
   @Post('analyze/url')
@@ -373,6 +375,98 @@ export class AiController {
           console.error('Failed to clean up temp file:', cleanupError);
         }
       }
+    }
+  }
+
+  @Post('generate-thumbnail')
+  @ApiOperation({
+    summary: 'Generate thumbnail image using DALL-E 3',
+    description:
+      'Takes an AI prompt and generates a thumbnail image, uploads it to Supabase, and returns the public URL. Optionally updates the audit record with the thumbnail URL if auditId is provided.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Thumbnail generated successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        thumbnailUrl: {
+          type: 'string',
+          example:
+            'https://your-supabase-project.supabase.co/storage/v1/object/public/thumbnails/...',
+        },
+        message: {
+          type: 'string',
+          example: 'Thumbnail generated successfully',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid request or missing parameters',
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'User not authenticated',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Failed to generate thumbnail',
+  })
+  async generateThumbnail(
+    @Body()
+    body: {
+      aiPrompt: string;
+      videoId: string;
+      auditId?: string;
+    },
+    @Req() req: AuthenticatedRequest,
+  ): Promise<{ thumbnailUrl: string; message: string }> {
+    const userId = req.user?.id;
+
+    if (!userId) {
+      throw new HttpException(
+        'User not authenticated',
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+
+    if (!body.aiPrompt || !body.videoId) {
+      throw new HttpException(
+        'aiPrompt and videoId are required',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    try {
+      const thumbnailUrl = await this.aiService.generateThumbnailImage(
+        userId,
+        body.aiPrompt,
+        body.videoId,
+      );
+
+      // If auditId is provided, update the audit record with the thumbnail URL
+      if (body.auditId) {
+        await this.auditRepository.updateThumbnailUrl(
+          body.auditId,
+          thumbnailUrl,
+        );
+      }
+
+      return {
+        thumbnailUrl,
+        message: 'Thumbnail generated successfully',
+      };
+    } catch (error) {
+      throw new HttpException(
+        {
+          statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
+          message: 'Failed to generate thumbnail',
+          error: error instanceof Error ? error.message : 'Unknown error',
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
     }
   }
 }

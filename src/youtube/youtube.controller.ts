@@ -92,9 +92,9 @@ export class YoutubeController {
       throw new BadRequestException('YouTube URL is required');
     }
 
-    // Basic URL validation
+    // Basic URL validation - accepts URLs with additional query parameters
     const youtubeRegex =
-      /^https?:\/\/(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
+      /^https?:\/\/(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})(?:[?&].*)?$/;
     if (!youtubeRegex.test(url)) {
       this.logger.logWithCorrelation(
         'warn',

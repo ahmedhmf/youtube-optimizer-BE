@@ -18,5 +18,6 @@ export interface AuditResponse {
     chapters: ChaptersResult;
     thumbnailIdeas?: ThumbnailIdeaResult[];
     thumbnailAIPrompts?: string[];
+    thumbnailUrl?: string;
   };
 }

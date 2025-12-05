@@ -797,6 +797,24 @@ export class DatabaseQueueService implements OnModuleInit {
         result,
       );
 
+      // Update thumbnail URL if generated
+      if (result.analysis.thumbnailUrl) {
+        try {
+          await this.auditRepo.updateThumbnailUrl(
+            savedAudit.id,
+            result.analysis.thumbnailUrl,
+          );
+          this.logger.log(
+            `Thumbnail URL saved to audit ${savedAudit.id}: ${result.analysis.thumbnailUrl}`,
+          );
+        } catch (thumbnailUpdateError) {
+          this.logger.warn(
+            `Failed to update thumbnail URL for audit ${savedAudit.id}`,
+            thumbnailUpdateError,
+          );
+        }
+      }
+
       // Log usage event
       await client.from('usage_events').insert({
         user_id: payload.userId,
@@ -968,17 +986,49 @@ export class DatabaseQueueService implements OnModuleInit {
         this.aiService.generateChapters(transcript),
       ]);
 
-    await this.updateJobProgress(jobId, 80, 'Generating thumbnails', userId);
+    await this.updateJobProgress(
+      jobId,
+      70,
+      'Generating thumbnail prompts',
+      userId,
+    );
 
-    // Optionally generate thumbnail ideas (can be skipped for faster processing)
+    // Generate thumbnail ideas and AI prompts
     let thumbnailIdeas: any[] = [];
     let thumbnailAIPrompts: string[] = [];
+    let thumbnailUrl: string | null = null;
 
     try {
       [thumbnailIdeas, thumbnailAIPrompts] = await Promise.all([
         this.aiService.generateThumbnailIdeas(userId, transcript),
         this.aiService.generateThumbnailAIPrompts(userId, transcript),
       ]);
+
+      // Generate actual thumbnail image using the first AI prompt
+      if (thumbnailAIPrompts && thumbnailAIPrompts.length > 0) {
+        await this.updateJobProgress(
+          jobId,
+          85,
+          'Generating thumbnail image',
+          userId,
+        );
+
+        try {
+          thumbnailUrl = await this.aiService.generateThumbnailImage(
+            userId,
+            thumbnailAIPrompts[0],
+            video.id,
+          );
+          this.logger.log(
+            `Thumbnail generated successfully for job ${jobId}: ${thumbnailUrl}`,
+          );
+        } catch (thumbnailError) {
+          this.logger.warn(
+            `Thumbnail image generation failed for job ${jobId}, continuing without it`,
+            thumbnailError,
+          );
+        }
+      }
     } catch (error) {
       this.logger.warn(
         'Thumbnail generation failed, continuing without it',
@@ -995,6 +1045,7 @@ export class DatabaseQueueService implements OnModuleInit {
         chapters,
         thumbnailIdeas,
         thumbnailAIPrompts,
+        ...(thumbnailUrl && { thumbnailUrl }),
       },
     };
 

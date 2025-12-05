@@ -196,4 +196,29 @@ export class AuditRepository {
       throw error;
     }
   }
+
+  async updateThumbnailUrl(
+    auditId: string,
+    thumbnailUrl: string,
+  ): Promise<void> {
+    try {
+      const client = this.supabase.getClient();
+      const { error } = await client
+        .from('audits')
+        .update({ thumbnail_url: thumbnailUrl })
+        .eq('id', auditId);
+
+      if (error) {
+        this.logger.error('Failed to update thumbnail URL:', error);
+        throw new Error(`Failed to update thumbnail URL: ${error.message}`);
+      }
+
+      this.logger.log(
+        `Successfully updated thumbnail URL for audit ${auditId}`,
+      );
+    } catch (error) {
+      this.logger.error('Error updating thumbnail URL:', error);
+      throw error;
+    }
+  }
 }

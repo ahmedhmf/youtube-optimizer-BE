@@ -335,45 +335,46 @@ ANALYZE THIS VIDEO TRANSCRIPT:
 ${transcript.slice(0, 3000)}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-YOUR TASK: Create 5 detailed AI image generation prompts optimized for thumbnail creation.
+YOUR TASK: Create ONE perfect, highly detailed AI image generation prompt optimized for YouTube thumbnail creation.
 
-PROMPT STRUCTURE:
-Each prompt should include:
-1. Subject/Main Focus (person, object, scene)
-2. Emotion/Expression (if applicable)
-3. Action/Pose
-4. Composition (framing, angle, perspective)
-5. Lighting (dramatic, soft, bright, neon)
-6. Color Palette (specific colors and mood)
-7. Style (photorealistic, cinematic, illustration, 3D render)
-8. Background/Setting
-9. Text Overlay Suggestion (what text to add in post-production)
-10. Technical specs (high detail, 4K, sharp focus)
+PROMPT STRUCTURE REQUIREMENTS:
+1. Subject/Main Focus (person, object, scene from the video content)
+2. Emotion/Expression (strong, eye-catching emotional reaction if applicable)
+3. Action/Pose (dynamic, engaging)
+4. Composition (rule of thirds, subject placement for text space)
+5. Lighting (dramatic, professional, attention-grabbing)
+6. Color Palette (bold, high contrast colors for mobile visibility)
+7. Style (photorealistic, cinematic, or specified style)
+8. Background/Setting (clean, not distracting, complements subject)
+9. Technical Quality (ultra detailed, sharp, professional)
 
 PROMPT BEST PRACTICES:
-• Be extremely specific and detailed
-• Use descriptive adjectives
-• Specify technical quality (ultra detailed, 8K, photorealistic)
-• Include style references (cinematic lighting, studio photography)
-• Mention text space/placement
-• Consider YouTube thumbnail aspect ratio (16:9)
-• Optimize for mobile visibility
+• Be extremely specific and detailed (200+ words)
+• Use vivid, descriptive adjectives
+• Specify technical quality (ultra detailed, 8K, photorealistic, sharp focus)
+• Include professional references (cinematic lighting, studio photography)
+• Leave clear space for text overlay (typically top or side)
+• Optimize for 16:9 aspect ratio and mobile visibility
+• Focus on ONE clear, impactful subject or scene
+• Use bold colors and high contrast
+• Create depth and dimension
 
-EXAMPLE PROMPT FORMAT:
-"Photorealistic close-up portrait of excited person with wide eyes and open mouth expressing shock, pointing finger at glowing laptop screen, dramatic side lighting with orange and blue color grading, dark background with subtle tech elements, cinematic composition with subject on left third, space for bold text overlay at top right, ultra detailed, 8K quality, professional studio photography style, high contrast for mobile visibility"
+CRITICAL REQUIREMENTS:
+• DO NOT include play buttons, YouTube logos, or video player UI elements
+• DO NOT add text overlays in the generated image (text will be added in post-production)
+• Focus on the actual content/subject matter from the video
+• Create a standalone image that works as a thumbnail background
+• Make it eye-catching and scroll-stopping
+
+EXAMPLE PROMPT:
+"Photorealistic close-up portrait of excited young programmer with wide eyes and amazed expression, mouth slightly open in shock, pointing finger directly at glowing laptop screen showing colorful code, dramatic side lighting with vibrant orange and electric blue color grading creating strong contrast, dark moody background with subtle floating tech icons and circuit patterns, cinematic composition with subject positioned on left third of frame leaving generous space for bold text overlay at top right, professional studio photography quality with dramatic rim lighting highlighting hair and shoulders, ultra detailed facial features, 8K resolution, sharp focus on eyes, high contrast optimized for mobile viewing, bokeh effect on background elements, warm skin tones contrasting with cool tech elements, dynamic diagonal composition, no play buttons, no text, no UI elements, clean professional thumbnail background ready for text addition"
 
 RETURN FORMAT (JSON only):
 {
-  "aiPrompts": [
-    "Detailed prompt 1 for AI image generator...",
-    "Detailed prompt 2 for AI image generator...",
-    "Detailed prompt 3 for AI image generator...",
-    "Detailed prompt 4 for AI image generator...",
-    "Detailed prompt 5 for AI image generator..."
-  ]
+  "aiPrompt": "Your single, detailed prompt here (200+ words)..."
 }
 
-Generate exactly 5 diverse, detailed prompts ready for DALL-E, Midjourney, or Stable Diffusion.`;
+Generate ONE perfect, comprehensive prompt ready for DALL-E 3.`;
   }
 
   /**

@@ -20,7 +20,7 @@ export class VideoAnalysisDto {
     { protocols: ['https'], require_protocol: true },
     { message: 'Must be a valid HTTPS URL' },
   )
-  @Matches(/^https:\/\/(www\.)?youtube\.com\/watch\?v=[\w-]+/, {
+  @Matches(/^https:\/\/(www\.)?youtube\.com\/watch\?v=[\w-]+(&.*)?$/, {
     message: 'Must be a valid YouTube video URL',
   })
   @MaxLength(500, { message: 'URL must not exceed 500 characters' })

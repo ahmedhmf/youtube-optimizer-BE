@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { AuditController } from './audit.controller';
 import { AiModule } from '../ai/ai.module';
@@ -13,7 +13,7 @@ import { NotificationModule } from '../notifications/notification.module';
 
 @Module({
   imports: [
-    AiModule,
+    forwardRef(() => AiModule),
     YoutubeModule,
     SupabaseModule,
     AuthModule,

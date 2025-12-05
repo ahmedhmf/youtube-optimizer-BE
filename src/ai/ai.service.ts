@@ -20,6 +20,7 @@ import {
   NotificationType,
   NotificationSeverity,
 } from '../notifications/models/notification.types';
+import { SupabaseService } from '../supabase/supabase.service';
 
 @Injectable()
 export class AiService {
@@ -30,6 +31,7 @@ export class AiService {
     private readonly systemLogService: SystemLogService,
     private readonly userPreferencesService: UserPreferencesService,
     private readonly notificationService: NotificationService,
+    private readonly supabaseService: SupabaseService,
   ) {
     this.openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   }
@@ -542,7 +544,7 @@ export class AiService {
   }
 
   /**
-   * 6. Thumbnail AI Prompts - Generate AI image generation prompts
+   * 6. Thumbnail AI Prompts - Generate single optimized AI image generation prompt
    */
   async generateThumbnailAIPrompts(
     userId: string,
@@ -582,15 +584,15 @@ export class AiService {
       const res = await this.openai.chat.completions.create({
         model: 'gpt-4o-mini',
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.9,
+        temperature: 0.8,
       });
 
       const text = res.choices[0].message?.content ?? '{}';
       const jsonStart = text.indexOf('{');
       const jsonEnd = text.lastIndexOf('}');
-      const parsed = JSON.parse(
-        text.slice(jsonStart, jsonEnd + 1),
-      ) as ThumbnailGenerationResult;
+      const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1)) as {
+        aiPrompt?: string;
+      };
 
       const responseTime = Date.now() - startTime;
       await this.systemLogService.logSystem({
@@ -608,7 +610,8 @@ export class AiService {
         },
       });
 
-      return parsed.aiPrompts ?? [];
+      // Return as array with single prompt for backward compatibility
+      return parsed.aiPrompt ? [parsed.aiPrompt] : [];
     } catch (error) {
       const responseTime = Date.now() - startTime;
       await this.systemLogService.logSystem({
@@ -629,7 +632,118 @@ export class AiService {
   }
 
   /**
-   * 7. Complete Video Analysis - Run all analyses and return combined results
+   * 7. Generate Thumbnail Image - Create actual thumbnail using DALL-E 3
+   */
+  async generateThumbnailImage(
+    userId: string,
+    aiPrompt: string,
+    videoId: string,
+  ): Promise<string> {
+    const startTime = Date.now();
+    try {
+      this.logger.log(`Generating thumbnail image for user ${userId}...`);
+
+      // Generate image using DALL-E 3
+      // Note: DALL-E 3 supports 1024x1024, 1792x1024, or 1024x1792
+      // We'll use 1792x1024 (16:9 landscape) which is closest to 1280x720
+
+      // Enhance prompt to ensure no UI elements or play buttons
+      const enhancedPrompt = `${aiPrompt}. IMPORTANT: This is a YouTube thumbnail background image. Do NOT include any play buttons, video player controls, YouTube logos, or text overlays. Focus only on the visual content and subjects. Create a clean, professional image suitable for adding text overlay later.`;
+
+      const response = await this.openai.images.generate({
+        model: 'dall-e-3',
+        prompt: enhancedPrompt,
+        n: 1,
+        size: '1792x1024',
+        quality: 'standard',
+        response_format: 'url',
+      });
+
+      const imageUrl = response.data?.[0]?.url;
+      if (!imageUrl) {
+        throw new Error('No image URL returned from OpenAI');
+      }
+
+      this.logger.log(`Image generated successfully: ${imageUrl}`);
+
+      // Download the image
+      const imageResponse = await fetch(imageUrl);
+      if (!imageResponse.ok) {
+        throw new Error(
+          `Failed to download image: ${imageResponse.statusText}`,
+        );
+      }
+
+      const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
+      const fileName = `thumbnails/${userId}/${videoId}_${Date.now()}.png`;
+
+      // Upload to Supabase Storage
+      const supabase = this.supabaseService.getServiceClient();
+
+      // Ensure bucket exists (you may need to create 'thumbnails' bucket in Supabase Dashboard)
+      const { error: uploadError } = await supabase.storage
+        .from('thumbnails')
+        .upload(fileName, imageBuffer, {
+          contentType: 'image/png',
+          cacheControl: '3600',
+          upsert: false,
+        });
+
+      if (uploadError) {
+        this.logger.error(
+          `Failed to upload to Supabase: ${uploadError.message}`,
+        );
+        throw new Error(`Storage upload failed: ${uploadError.message}`);
+      }
+
+      // Get public URL
+      const { data: publicUrlData } = supabase.storage
+        .from('thumbnails')
+        .getPublicUrl(fileName);
+
+      const publicUrl = publicUrlData.publicUrl;
+      this.logger.log(`Thumbnail uploaded successfully: ${publicUrl}`);
+
+      const responseTime = Date.now() - startTime;
+      await this.systemLogService.logSystem({
+        logLevel: LogSeverity.INFO,
+        category: SystemLogCategory.NETWORK,
+        serviceName: 'AiService',
+        message: 'Thumbnail image generated and uploaded successfully',
+        details: {
+          model: 'dall-e-3',
+          userId,
+          videoId,
+          promptLength: aiPrompt.length,
+          fileName,
+          publicUrl,
+          responseTimeMs: responseTime,
+        },
+      });
+
+      return publicUrl;
+    } catch (error) {
+      const responseTime = Date.now() - startTime;
+      await this.systemLogService.logSystem({
+        logLevel: LogSeverity.ERROR,
+        category: SystemLogCategory.NETWORK,
+        serviceName: 'AiService',
+        message: 'Failed to generate thumbnail image',
+        details: {
+          model: 'dall-e-3',
+          userId,
+          videoId,
+          responseTimeMs: responseTime,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        stackTrace: error instanceof Error ? error.stack : undefined,
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * 8. Complete Video Analysis - Run all analyses and return combined results
    * This is the main method that combines all 7 analyses
    */
   async analyzeVideoComplete(
