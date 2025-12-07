@@ -13,6 +13,9 @@ import type {
 import * as fs from 'node:fs';
 import { PromptsService } from './prompts.service';
 import { ThumbnailComposerService } from './thumbnail-composer.service';
+import { ThumbnailPromptsService } from './thumbnail-prompts.service';
+import { ThumbnailEnhancementService } from './thumbnail-enhancement.service';
+import { ThumbnailAssetsComposerService } from './thumbnail-assets-composer.service';
 import { SystemLogService } from '../logging/services/system-log.service';
 import { LogSeverity, SystemLogCategory } from '../logging/dto/log.types';
 import { UserPreferencesService } from '../user-preferences/user-preferences.service';
@@ -27,6 +30,8 @@ import { SupabaseService } from '../supabase/supabase.service';
 export class AiService {
   private readonly logger = new Logger(AiService.name);
   private readonly openai: OpenAI;
+  private readonly fireworksApiKey: string;
+  private readonly fireworksBaseUrl = 'https://api.fireworks.ai/inference/v1';
 
   constructor(
     private readonly systemLogService: SystemLogService,
@@ -34,8 +39,15 @@ export class AiService {
     private readonly notificationService: NotificationService,
     private readonly supabaseService: SupabaseService,
     private readonly thumbnailComposerService: ThumbnailComposerService,
+    private readonly thumbnailAssetsComposerService: ThumbnailAssetsComposerService,
   ) {
     this.openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    this.fireworksApiKey = process.env.FIREWORKS_API_KEY || '';
+    if (!this.fireworksApiKey) {
+      this.logger.warn(
+        'FIREWORKS_API_KEY not set, thumbnail generation will fail',
+      );
+    }
   }
 
   /**
@@ -141,6 +153,20 @@ export class AiService {
       });
       throw error;
     }
+  }
+
+  /**
+   * Select thumbnail template based on video content
+   */
+  async selectThumbnailTemplate(
+    title: string,
+    transcript: string,
+  ): Promise<string> {
+    const template = await this.thumbnailComposerService.selectTemplate(
+      title,
+      transcript,
+    );
+    return template;
   }
 
   // ============================================
@@ -326,6 +352,92 @@ export class AiService {
         details: {
           model: 'gpt-4o-mini',
           transcriptLength: transcript.length,
+          responseTimeMs: responseTime,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        stackTrace: error instanceof Error ? error.stack : undefined,
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Detect video category based on title, description, and transcript
+   */
+  async detectVideoCategory(
+    userId: string,
+    title: string,
+    description: string,
+    transcript: string,
+  ): Promise<string> {
+    const startTime = Date.now();
+    try {
+      const prompt = `Analyze this YouTube video and determine the most appropriate category.
+
+Video Title: ${title}
+Video Description: ${description.slice(0, 500)}
+Transcript Sample: ${transcript.slice(0, 2000)}
+
+Categories to choose from:
+- Education
+- Entertainment
+- Gaming
+- Technology
+- Music
+- Sports
+- News
+- Comedy
+- Lifestyle
+- Tutorial
+- Review
+- Vlog
+- Documentary
+- Science
+- Health & Fitness
+- Cooking
+- Travel
+- Business
+- Finance
+- Arts & Crafts
+
+Respond with ONLY the category name, nothing else.`;
+
+      const res = await this.openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.3,
+      });
+
+      const category = (res.choices[0].message?.content ?? 'General').trim();
+
+      const responseTime = Date.now() - startTime;
+      await this.systemLogService.logSystem({
+        logLevel: LogSeverity.INFO,
+        category: SystemLogCategory.NETWORK,
+        serviceName: 'AiService',
+        message: 'OpenAI API call successful - detectVideoCategory',
+        details: {
+          model: 'gpt-4o-mini',
+          videoTitle: title,
+          detectedCategory: category,
+          promptTokens: res.usage?.prompt_tokens,
+          completionTokens: res.usage?.completion_tokens,
+          totalTokens: res.usage?.total_tokens,
+          responseTimeMs: responseTime,
+        },
+      });
+
+      return category;
+    } catch (error) {
+      const responseTime = Date.now() - startTime;
+      await this.systemLogService.logSystem({
+        logLevel: LogSeverity.ERROR,
+        category: SystemLogCategory.NETWORK,
+        serviceName: 'AiService',
+        message: 'OpenAI API call failed - detectVideoCategory',
+        details: {
+          model: 'gpt-4o-mini',
+          videoTitle: title,
           responseTimeMs: responseTime,
           error: error instanceof Error ? error.message : String(error),
         },
@@ -805,6 +917,367 @@ Provide detailed descriptions focusing on these visual elements to recreate the 
   }
 
   /**
+   * 7A. Generate Thumbnail Background Only - For Frontend Composition
+   * Returns enhanced background with placeholders for text/images/logos
+   */
+  async generateThumbnailBackground(
+    userId: string,
+    aiPrompt: string,
+    videoId: string,
+    videoTitle?: string,
+    transcript?: string,
+  ): Promise<{
+    backgroundUrl: string;
+    template: string;
+    enhancementStyle: string;
+    placeholders: Array<{
+      type: 'text' | 'image' | 'logo';
+      id: string;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      zIndex: number;
+    }>;
+  }> {
+    const startTime = Date.now();
+    try {
+      this.logger.log(
+        `Generating thumbnail background for video: ${videoTitle || videoId}`,
+      );
+
+      // Step 1: Select template based on video content
+      let selectedTemplate = 'BIG_BOLD_TEXT'; // Default
+      let customPrompt = aiPrompt;
+
+      if (videoTitle && transcript) {
+        selectedTemplate = await this.thumbnailComposerService.selectTemplate(
+          videoTitle,
+          transcript,
+        );
+        this.logger.log(`Selected template: ${selectedTemplate}`);
+
+        customPrompt = ThumbnailPromptsService.generateBackgroundPrompt(
+          videoTitle,
+          transcript,
+          selectedTemplate as any,
+        );
+      }
+
+      // Step 2: Generate background using Fireworks AI Flux (1792x1024)
+      this.logger.log('Generating base image with Fireworks AI Flux...');
+      this.logger.log(`Prompt: ${customPrompt}`);
+      
+      const fireworksResponse = await fetch(
+        'https://api.fireworks.ai/inference/v1/workflows/accounts/fireworks/models/flux-1-schnell-fp8/text_to_image',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${this.fireworksApiKey}`,
+            Accept: 'image/jpeg',
+          },
+          body: JSON.stringify({
+            prompt: customPrompt,
+            negative_prompt: 'blurry, low quality, distorted, deformed, ugly, bad anatomy, watermark, text, letters, words, signature, username, logo, people faces in focus, human subjects, cartoon, anime, illustration, painting',
+            guidance_scale: 7.5,
+            num_inference_steps: 30,
+          }),
+        },
+      );
+
+      if (!fireworksResponse.ok) {
+        const errorText = await fireworksResponse.text();
+        this.logger.error(`Fireworks API error: ${errorText}`);
+        throw new Error(
+          `Fireworks AI request failed: ${fireworksResponse.status} ${errorText}`,
+        );
+      }
+
+      const baseBuffer = Buffer.from(await fireworksResponse.arrayBuffer());
+
+      if (!baseBuffer || baseBuffer.length === 0) {
+        throw new Error('No valid image returned from Fireworks AI');
+      }
+
+      this.logger.log('Successfully generated base image');
+
+      // Step 3: Apply professional post-processing
+      const enhancementStyle =
+        ThumbnailEnhancementService.detectStyleFromContent(
+          videoTitle || '',
+          transcript || '',
+        );
+
+      const enhancedBuffer =
+        await ThumbnailEnhancementService.enhanceBackground(
+          baseBuffer,
+          enhancementStyle as any,
+        );
+
+      this.logger.log(
+        `Enhanced background with ${enhancementStyle} style post-processing`,
+      );
+
+      // Step 4: Upload background to Supabase
+      const fileName = `thumbnails/${userId}/${videoId}_bg_${Date.now()}.png`;
+      const supabase = this.supabaseService.getServiceClient();
+
+      const { error: uploadError } = await supabase.storage
+        .from('thumbnails')
+        .upload(fileName, enhancedBuffer, {
+          contentType: 'image/png',
+          cacheControl: '3600',
+          upsert: false,
+        });
+
+      if (uploadError) {
+        throw new Error(`Storage upload failed: ${uploadError.message}`);
+      }
+
+      const { data: publicUrlData } = supabase.storage
+        .from('thumbnails')
+        .getPublicUrl(fileName);
+
+      const backgroundUrl = publicUrlData.publicUrl;
+      this.logger.log(`Background uploaded: ${backgroundUrl}`);
+
+      // Generate placeholders based on template
+      const placeholders = this.generatePlaceholders(selectedTemplate);
+
+      const responseTime = Date.now() - startTime;
+      await this.systemLogService.logSystem({
+        logLevel: LogSeverity.INFO,
+        category: SystemLogCategory.NETWORK,
+        serviceName: 'AiService',
+        message: 'Thumbnail background generated successfully',
+        details: {
+          model: 'fireworks-flux-schnell',
+          userId,
+          videoId,
+          template: selectedTemplate,
+          enhancementStyle,
+          responseTimeMs: responseTime,
+        },
+      });
+
+      return {
+        backgroundUrl,
+        template: selectedTemplate,
+        enhancementStyle,
+        placeholders,
+      };
+    } catch (error) {
+      const responseTime = Date.now() - startTime;
+      await this.systemLogService.logSystem({
+        logLevel: LogSeverity.ERROR,
+        category: SystemLogCategory.NETWORK,
+        serviceName: 'AiService',
+        message: 'Failed to generate thumbnail background',
+        details: {
+          userId,
+          videoId,
+          responseTimeMs: responseTime,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        stackTrace: error instanceof Error ? error.stack : undefined,
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Generate complete thumbnail with user-provided assets
+   */
+  async generateCompleteThumbnail(
+    userId: string,
+    videoId: string,
+    videoTitle: string,
+    transcript: string,
+    template: string,
+    templateData: Record<string, any>,
+    brandLogo?: {
+      url: string;
+      position: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+      size: 'small' | 'medium' | 'large';
+    },
+    watermark?: string,
+  ): Promise<string> {
+    const startTime = Date.now();
+    try {
+      this.logger.log(
+        `Generating complete thumbnail for video: ${videoTitle}, template: ${template}`,
+      );
+
+      // Step 1: Generate background prompt
+      const backgroundPrompt = ThumbnailPromptsService.generateBackgroundPrompt(
+        videoTitle,
+        transcript,
+        template as any,
+      );
+
+      // Step 2: Generate base background with Fireworks AI
+      this.logger.log('Generating base background...');
+      this.logger.log(`Prompt: ${backgroundPrompt}`);
+      
+      const fireworksResponse = await fetch(
+        'https://api.fireworks.ai/inference/v1/workflows/accounts/fireworks/models/flux-1-schnell-fp8/text_to_image',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${this.fireworksApiKey}`,
+            Accept: 'image/jpeg',
+          },
+          body: JSON.stringify({
+            prompt: backgroundPrompt,
+            negative_prompt: 'blurry, low quality, distorted, deformed, ugly, bad anatomy, watermark, text, letters, words, signature, username, logo, people faces in focus, human subjects, cartoon, anime, illustration, painting',
+            guidance_scale: 7.5,
+            num_inference_steps: 30,
+          }),
+        },
+      );
+
+      if (!fireworksResponse.ok) {
+        const errorText = await fireworksResponse.text();
+        throw new Error(
+          `Fireworks AI request failed: ${fireworksResponse.status} ${errorText}`,
+        );
+      }
+
+      const baseBuffer = Buffer.from(await fireworksResponse.arrayBuffer());
+
+      // Step 3: Apply professional enhancement
+      const enhancementStyle =
+        ThumbnailEnhancementService.detectStyleFromContent(
+          videoTitle,
+          transcript,
+        );
+
+      const enhancedBuffer =
+        await ThumbnailEnhancementService.enhanceBackground(
+          baseBuffer,
+          enhancementStyle as any,
+        );
+
+      this.logger.log('Enhanced background generated');
+
+      // Step 4: Compose with user assets
+      this.logger.log('Composing with user assets...');
+      const finalBuffer = await this.thumbnailAssetsComposerService.composeWithAssets(
+        enhancedBuffer,
+        template,
+        templateData,
+        brandLogo,
+        watermark,
+      );
+
+      // Step 5: Upload to Supabase
+      const fileName = `thumbnails/${userId}/${videoId}_complete_${Date.now()}.png`;
+      const supabase = this.supabaseService.getServiceClient();
+
+      const { error: uploadError } = await supabase.storage
+        .from('thumbnails')
+        .upload(fileName, finalBuffer, {
+          contentType: 'image/png',
+          cacheControl: '3600',
+          upsert: false,
+        });
+
+      if (uploadError) {
+        throw new Error(`Storage upload failed: ${uploadError.message}`);
+      }
+
+      const { data: publicUrlData } = supabase.storage
+        .from('thumbnails')
+        .getPublicUrl(fileName);
+
+      const thumbnailUrl = publicUrlData.publicUrl;
+
+      const responseTime = Date.now() - startTime;
+      await this.systemLogService.logSystem({
+        logLevel: LogSeverity.INFO,
+        category: SystemLogCategory.NETWORK,
+        serviceName: 'AiService',
+        message: 'Complete thumbnail generated successfully',
+        details: {
+          userId,
+          videoId,
+          template,
+          responseTimeMs: responseTime,
+          thumbnailUrl,
+        },
+      });
+
+      return thumbnailUrl;
+    } catch (error) {
+      const responseTime = Date.now() - startTime;
+      await this.systemLogService.logSystem({
+        logLevel: LogSeverity.ERROR,
+        category: SystemLogCategory.NETWORK,
+        serviceName: 'AiService',
+        message: 'Failed to generate complete thumbnail',
+        details: {
+          userId,
+          videoId,
+          template,
+          responseTimeMs: responseTime,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        stackTrace: error instanceof Error ? error.stack : undefined,
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Generate placeholder positions based on template
+   */
+  private generatePlaceholders(
+    template: string,
+  ): Array<{
+    type: 'text' | 'image' | 'logo';
+    id: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    zIndex: number;
+  }> {
+    // Will be populated by frontend - return empty for now
+    // You can define default positions per template if needed
+    return [
+      {
+        type: 'text',
+        id: 'main-text',
+        x: 100,
+        y: 100,
+        width: 1592,
+        height: 200,
+        zIndex: 10,
+      },
+      {
+        type: 'image',
+        id: 'person-image',
+        x: 100,
+        y: 400,
+        width: 500,
+        height: 500,
+        zIndex: 5,
+      },
+      {
+        type: 'logo',
+        id: 'brand-logo',
+        x: 1500,
+        y: 50,
+        width: 200,
+        height: 200,
+        zIndex: 15,
+      },
+    ];
+  }
+
+  /**
    * 7. Generate Thumbnail Image - NEW SYSTEM with 10 Templates
    * Uses DALL-E 3 for background + Sharp.js for text overlays
    */
@@ -817,49 +1290,96 @@ Provide detailed descriptions focusing on these visual elements to recreate the 
   ): Promise<string> {
     const startTime = Date.now();
     try {
-      this.logger.log(`Generating thumbnail for video: ${videoTitle || videoId}`);
+      this.logger.log(
+        `Generating thumbnail for video: ${videoTitle || videoId}`,
+      );
 
-      // Step 1: Generate DALL-E 3 background (1792x1024 HD)
-      const enhancedPrompt = `Professional YouTube thumbnail background image.
+      // Step 1: Select template based on video content
+      let selectedTemplate: any = null;
+      let customPrompt = aiPrompt;
 
-${aiPrompt}
+      if (videoTitle && transcript) {
+        // AI-based template selection
+        selectedTemplate = await this.thumbnailComposerService.selectTemplate(
+          videoTitle,
+          transcript,
+        );
+        this.logger.log(`Selected template: ${selectedTemplate}`);
 
-CRITICAL: NO text, words, or letters in the image. This is a background only.
-High contrast, bold colors, eye-catching composition, photorealistic style.`;
-
-      const response = await this.openai.images.generate({
-        model: 'dall-e-3',
-        prompt: enhancedPrompt,
-        n: 1,
-        size: '1792x1024',
-        quality: 'hd',
-        style: 'vivid',
-        response_format: 'url',
-      });
-
-      const imageUrl = response.data?.[0]?.url;
-      if (!imageUrl) {
-        throw new Error('No image URL returned from DALL-E');
+        // Generate video-specific Flux prompt
+        customPrompt = ThumbnailPromptsService.generateBackgroundPrompt(
+          videoTitle,
+          transcript,
+          selectedTemplate,
+        );
       }
 
-      // Step 2: Download the background image
-      const imageResponse = await fetch(imageUrl);
-      if (!imageResponse.ok) {
-        throw new Error(`Failed to download image: ${imageResponse.statusText}`);
+      // Step 2: Generate background using Fireworks AI Flux (1792x1024)
+      this.logger.log('Generating image with Fireworks AI Flux...');
+      const fireworksResponse = await fetch(
+        'https://api.fireworks.ai/inference/v1/workflows/accounts/fireworks/models/flux-1-schnell-fp8/text_to_image',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${this.fireworksApiKey}`,
+            Accept: 'image/jpeg',
+          },
+          body: JSON.stringify({
+            prompt: customPrompt,
+          }),
+        },
+      );
+
+      if (!fireworksResponse.ok) {
+        const errorText = await fireworksResponse.text();
+        this.logger.error(`Fireworks API error: ${errorText}`);
+        throw new Error(
+          `Fireworks AI request failed: ${fireworksResponse.status} ${errorText}`,
+        );
       }
 
-      const backgroundBuffer = Buffer.from(await imageResponse.arrayBuffer());
+      // The response is the image itself (binary - BASE only, not final!)
+      const baseBuffer = Buffer.from(await fireworksResponse.arrayBuffer());
 
-      // Step 3: Compose with text overlay (if title and transcript provided)
+      if (!baseBuffer || baseBuffer.length === 0) {
+        throw new Error('No valid image returned from Fireworks AI');
+      }
+
+      this.logger.log(
+        'Successfully generated BASE image with Fireworks AI Flux',
+      );
+
+      // Step 3: Apply professional post-processing (THIS IS THE MAGIC!)
+      this.logger.log('Applying professional color grading and enhancement...');
+
+      const enhancementStyle =
+        ThumbnailEnhancementService.detectStyleFromContent(
+          videoTitle || '',
+          transcript || '',
+        );
+
+      const backgroundBuffer =
+        await ThumbnailEnhancementService.enhanceBackground(
+          baseBuffer,
+          enhancementStyle as any,
+        );
+
+      this.logger.log(
+        `Enhanced background with ${enhancementStyle} style post-processing`,
+      );
+
+      // Step 5: Compose with text overlay
       let finalBuffer: Buffer;
 
       if (videoTitle && transcript) {
         try {
-          // Use new template system
+          // Use template system with selected style
           finalBuffer = await this.thumbnailComposerService.composeThumbnail(
             backgroundBuffer,
             videoTitle,
             transcript,
+            selectedTemplate,
           );
           this.logger.log('Thumbnail composed with template text overlay');
         } catch (compositionError) {

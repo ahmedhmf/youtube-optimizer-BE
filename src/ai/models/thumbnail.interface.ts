@@ -36,3 +36,22 @@ export enum ThumbnailStyle {
   BLUR_BACKGROUND_TEXT = 'blur_background_text',
   MAGAZINE_STYLE = 'magazine_style',
 }
+
+export interface ThumbnailPlaceholder {
+  type: 'text' | 'image' | 'logo';
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  zIndex: number;
+  style?: {
+    fontSize?: number;
+    fontWeight?: string;
+    color?: string;
+    strokeColor?: string;
+    strokeWidth?: number;
+    rotation?: number;
+    opacity?: number;
+  };
+}

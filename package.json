@@ -33,6 +33,7 @@
     "db:migration:list": "supabase migration list"
   },
   "dependencies": {
+    "@ai-sdk/fireworks": "^1.0.29",
     "@anthropic-ai/sdk": "^0.68.0",
     "@nestjs/axios": "^4.0.1",
     "@nestjs/bull": "^11.0.4",

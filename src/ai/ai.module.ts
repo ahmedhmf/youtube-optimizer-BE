@@ -1,8 +1,10 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { AiService } from './ai.service';
 import { AiController } from './ai.controller';
+import { WorkflowController } from './workflow.controller';
 import { PromptsService } from './prompts.service';
 import { ThumbnailComposerService } from './thumbnail-composer.service';
+import { ThumbnailAssetsComposerService } from './thumbnail-assets-composer.service';
 import { YoutubeModule } from '../youtube/youtube.module';
 import { LoggingModule } from '../logging/logging.module';
 import { UserPreferencesModule } from '../user-preferences/user-preferences.module';
@@ -19,8 +21,13 @@ import { AuditModule } from '../audit/audit.module';
     SupabaseModule,
     forwardRef(() => AuditModule),
   ],
-  providers: [AiService, PromptsService, ThumbnailComposerService],
-  controllers: [AiController],
+  providers: [
+    AiService,
+    PromptsService,
+    ThumbnailComposerService,
+    ThumbnailAssetsComposerService,
+  ],
+  controllers: [AiController, WorkflowController],
   exports: [AiService],
 })
 export class AiModule {}

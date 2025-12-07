@@ -60,13 +60,28 @@ export class SystemLogService {
       });
 
       if (error) {
-        this.logger.error('Failed to log critical system event:', error);
+        // Check if it's a Cloudflare/network error
+        const errorMessage = error?.message || JSON.stringify(error);
+        const isCloudflareError = errorMessage.includes('cloudflare') || errorMessage.includes('500 Internal Server Error');
+        
+        if (isCloudflareError) {
+          this.logger.warn('Cloudflare/Supabase connection issue, log skipped (will retry later)');
+        } else {
+          this.logger.error('Failed to log critical system event:', error);
+        }
       }
 
       // Also log to console for critical errors
       this.logger.error(`[${data.category}] ${data.message}`, data.stackTrace);
     } catch (error) {
-      this.logger.error('Exception logging critical system event:', error);
+      const errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
+      const isCloudflareError = errorMessage.includes('cloudflare') || errorMessage.includes('500');
+      
+      if (isCloudflareError) {
+        this.logger.warn('Supabase connection unavailable, skipping system log');
+      } else {
+        this.logger.error('Exception logging critical system event:', error);
+      }
     }
   }
 

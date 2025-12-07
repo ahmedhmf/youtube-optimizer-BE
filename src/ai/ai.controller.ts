@@ -422,7 +422,15 @@ export class AiController {
       auditId?: string;
     },
     @Req() req: AuthenticatedRequest,
-  ): Promise<{ thumbnailUrl: string; message: string }> {
+  ): Promise<{
+    backgroundUrl: string;
+    message: string;
+    template: string;
+    enhancementStyle: string;
+    placeholders: any[];
+    generatedAt: string;
+    dimensions: { width: number; height: number };
+  }> {
     const userId = req.user?.id;
 
     if (!userId) {
@@ -440,23 +448,31 @@ export class AiController {
     }
 
     try {
-      const thumbnailUrl = await this.aiService.generateThumbnailImage(
+      // Generate enhanced background only (no text/overlays)
+      // Frontend will add text, person images, and logos
+      const result = await this.aiService.generateThumbnailBackground(
         userId,
         body.aiPrompt,
         body.videoId,
       );
 
-      // If auditId is provided, update the audit record with the thumbnail URL
+      // If auditId is provided, update the audit record with the background URL
       if (body.auditId) {
         await this.auditRepository.updateThumbnailUrl(
           body.auditId,
-          thumbnailUrl,
+          result.backgroundUrl,
         );
       }
 
       return {
-        thumbnailUrl,
-        message: 'Thumbnail generated successfully',
+        backgroundUrl: result.backgroundUrl,
+        message:
+          'Background generated successfully - ready for frontend composition',
+        template: result.template,
+        enhancementStyle: result.enhancementStyle,
+        placeholders: result.placeholders,
+        generatedAt: new Date().toISOString(),
+        dimensions: { width: 1792, height: 1024 },
       };
     } catch (error) {
       throw new HttpException(

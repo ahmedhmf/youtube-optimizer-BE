@@ -53,9 +53,9 @@ export class DatabaseQueueService implements OnModuleInit {
     setTimeout(() => {
       this.processJobs().catch((error) => {
         this.logger.error('Error in initial processJobs:', error);
-        throw error;
+        // Don't throw - just log and continue, will retry on next cron
       });
-    }, 1000);
+    }, 2000); // Delay startup to allow Supabase connection to stabilize
   }
 
   async addVideoAnalysisJob(jobData: VideoAnalysisJob): Promise<string> {
@@ -368,17 +368,37 @@ export class DatabaseQueueService implements OnModuleInit {
 
       if (error) {
         this.logger.error('Failed to fetch pending jobs:', error);
-        await this.systemLogService.logSystem({
-          logLevel: LogSeverity.ERROR,
-          category: SystemLogCategory.QUEUE,
-          serviceName: 'DatabaseQueueService',
-          message: 'Failed to fetch pending jobs from queue',
-          details: {
-            error: error.message,
-            activeJobs: this.activeJobs.size,
-          },
-          stackTrace: error instanceof Error ? error.stack : undefined,
-        });
+        // Check if it's a Cloudflare/network error
+        const errorMessage = error?.message || JSON.stringify(error);
+        const isCloudflareError =
+          errorMessage.includes('cloudflare') ||
+          errorMessage.includes('500 Internal Server Error');
+
+        if (isCloudflareError) {
+          this.logger.warn(
+            'Cloudflare/Supabase connection issue detected, will retry on next cycle',
+          );
+        }
+        
+        try {
+          await this.systemLogService.logSystem({
+            logLevel: LogSeverity.ERROR,
+            category: SystemLogCategory.QUEUE,
+            serviceName: 'DatabaseQueueService',
+            message: 'Failed to fetch pending jobs from queue',
+            details: {
+              error: errorMessage,
+              activeJobs: this.activeJobs.size,
+              isCloudflareError,
+            },
+            stackTrace: error instanceof Error ? error.stack : undefined,
+          });
+        } catch {
+          // Silently fail if logging also fails (Supabase down)
+          this.logger.warn(
+            'Could not log error to Supabase (connection issue)',
+          );
+        }
         return;
       }
 
